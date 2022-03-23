@@ -1,6 +1,6 @@
 import argparse
 import subprocess
-import os
+import datetime
 
 if __name__ == '__main__':
 
@@ -12,5 +12,9 @@ if __name__ == '__main__':
     incorrecta del comando)''')
     args = parser.parse_args()
 
-    p1 = subprocess.Popen([args.c], stdout = args.f)
-    p2 = subprocess.Popen([])
+    try:
+        p1 = subprocess.Popen([args.command], stdout = subprocess.PIPE)
+        
+        p3 = subprocess.Popen(['echo', '"{}: Comando {} ejecutado correctamente.'.format(datetime.now(), args.command), '>>', args.logfile])
+    except OSError as e:
+        p3 = subprocess.Popen(['echo', '"{}: Comando {} ejecutado correctamente.'.format(datetime.now(), e), '>>', args.logfile])
