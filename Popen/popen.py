@@ -14,10 +14,9 @@ if __name__ == '__main__':
 
     with open(args.file, 'a') as file:
         with open(args.logfile, 'a') as log:
-            with open('/tmp/err', 'r+') as err:
-                p1 = subprocess.Popen(args.command.split(), stdout = file, stderr = err)    
-                if err.readline() == '':
+                p1 = subprocess.Popen(args.command.split(), stdout = file, stderr = subprocess.PIPE)   
+                err = p1.communicate()[1]
+                if str(err) == "b''":
                     p2 = subprocess.Popen(['echo', '{}: Comando "{}" ejecutado correctamente.'.format(datetime.datetime.now(), args.command)], stdout = log)
                 else:
-                    p3 = subprocess.Popen(['echo', '{}: {}'.format(datetime.datetime.now(), err.readline())], stdout = log)
-   
+                    p3 = subprocess.Popen(['echo', '{}: {}'.format(datetime.datetime.now(), str(err).strip(r"\nb'"))], stdout = log)
