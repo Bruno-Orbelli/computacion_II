@@ -1,5 +1,6 @@
 import argparse
 import os
+import time
 
 def main():
     
@@ -12,19 +13,20 @@ def main():
     args = parser.parse_args()
 
     # Bucle para ejecutar n veces
-    # If/else para proceso hijo
+    # If para proceso hijo
     # Bucle para la suma
 
     for i in range(args.numero):
         procActual, suma = os.fork(), 0
-        if procActual != 0:
+        if procActual == 0:
             if args.verbose:
-                print('Starting process {}'.format(procActual))
-            for j in range(0, procActual - 1, 2):
+                print('Starting process {}'.format(os.getpid()))
+            for j in range(0, os.getpid() - 1, 2):
                 suma += j
-            print('{} - {}: {}'.format(procActual, os.getppid(), suma))
+            print('{} - {}: {}'.format(os.getpid(), os.getppid(), suma))
             if args.verbose:
-                print('Ending process {}'.format(procActual))
+                print('Ending process {}'.format(os.getpid()))
+            os._exit(0)
 
 if __name__ == '__main__':
     main()    
