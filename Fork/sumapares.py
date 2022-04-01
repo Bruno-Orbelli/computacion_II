@@ -1,6 +1,5 @@
 import argparse
 import os
-import time
 
 def main():
     
@@ -23,9 +22,9 @@ def main():
                 print('Starting process {}'.format(os.getpid()))
             for j in range(0, os.getpid() - 1, 2):
                 suma += j
-            print('{} - {}: {}'.format(os.getpid(), os.getppid(), suma))
             if args.verbose:
                 print('Ending process {}'.format(os.getpid()))
+            print('{} - {}: {}'.format(os.getpid(), os.getppid(), suma))
             os._exit(0)
 
 if __name__ == '__main__':
