@@ -18,7 +18,7 @@ def get_args():
 
 def main(args):
 
-    alfa = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
+    alfa = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'Ñ', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
     
     with open(args.file, 'w+') as file:
         
@@ -26,10 +26,10 @@ def main(args):
             new_proc = os.fork()
             
             if new_proc == 0:
-                letra = alfa[i % len(alfa)]
+                letra = alfa[i % len(alfa)]  #  si se indica un número de procesos hijo mayor que la cant. de letras del abecedario, se les vuelve a asignar la A,B,...
                 for j in range(args.repetitions):
                     if args.verbose:
-                        print(f'Proceso {os.getpid()} escribieno letra "{letra}"')
+                        print(f'Proceso {os.getpid()} escribiendo letra "{letra}"')
                     file.write(letra)
                     file.flush()
                     time.sleep(1)
