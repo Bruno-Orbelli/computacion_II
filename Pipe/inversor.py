@@ -13,19 +13,28 @@ def main(args):
 
     r, w = os.pipe()
     
-    with open(args.file, 'r') as file:
+    with open(args.file, 'r+') as file:
         
         for i in file.readlines():
+            
             new_proc = os.fork()
         
-            if new_proc == 0:
-                os.fdopen(r, 'r')
-                os.fdopen(w, 'w')
+            if not new_proc:
+                w = os.fdopen(w, 'w')
                 w.write(i[-1])
+                print(i)
                 w.close()
                 os._exit(0)
             
+        file.seek(0)
+        
         for j in range(len(file.readlines())):
             os.wait()
-        
-        rp.readline
+
+        r = os.fdopen(r, 'r')
+        print(r)
+        print(f'{r.readlines()}')
+        r.close()
+
+if __name__ == '__main__':
+    main(get_args())
