@@ -20,9 +20,9 @@ def main(args):
             new_proc = os.fork()
         
             if not new_proc:
+                os.close(r)
                 w = os.fdopen(w, 'w')
                 w.write(i[-1])
-                print(i)
                 w.close()
                 os._exit(0)
             
@@ -31,8 +31,8 @@ def main(args):
         for j in range(len(file.readlines())):
             os.wait()
 
+        os.close(w)
         r = os.fdopen(r, 'r')
-        print(r)
         print(f'{r.readlines()}')
         r.close()
 
