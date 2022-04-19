@@ -10,19 +10,21 @@ def get_args():
     return args
 
 def main(args):
-
-    r, w = os.pipe()
     
+    r, w = os.pipe()
+
     with open(args.file, 'r+') as file:
         
         for i in file.readlines():
+            
+            line = i.strip()
             
             new_proc = os.fork()
         
             if not new_proc:
                 os.close(r)
                 w = os.fdopen(w, 'w')
-                w.write(i[-1])
+                w.write(f'{line[::-1]}\n')
                 w.close()
                 os._exit(0)
             
@@ -31,10 +33,12 @@ def main(args):
         for j in range(len(file.readlines())):
             os.wait()
 
-        os.close(w)
-        r = os.fdopen(r, 'r')
-        print(f'{r.readlines()}')
-        r.close()
+        if os.getpid():
+            os.close(w)
+            r = os.fdopen(r, 'r')
+            for phrase in r.readlines():
+                print(f'{phrase}', end = '')
+            r.close()
 
 if __name__ == '__main__':
     main(get_args())
