@@ -1,4 +1,3 @@
-from binhex import LINELEN
 import os, argparse
 
 def get_args():
@@ -15,51 +14,46 @@ def main(args):
     rp, wp = os.pipe() # pipe del proc. padre
     rc, wc = os.pipe() # pipe del proc. hijo
 
-    with open(args.file, 'r+') as file:
-        
-        invLines, linesAmount = 0, len(file.readlines())
-        file.seek(0)
-
-        for i in file.readlines():
+    with open(args.file, 'r') as file:
+         
+        for _ in range(len(file.readlines())):
             
-            line = i.strip()
             new_proc = os.fork()
-            print(new_proc)
-        
-            if new_proc:
-                if not invLines:                
-                    wc = os.fdopen(wc, 'w')
-                
-                wc.write(line)
-                invLines += 1
-                
-                if invLines == linesAmount:
-                   wc.close()
-            
-            else:
-                try:
-                    os.close(wc)
-                except TypeError:
-                    wc.close()
-                
+                   
+            if not new_proc:
+                # lectira del hijo
+                os.close(wc) 
                 rc = os.fdopen(rc, 'r')
-                toRead = rc.read()
+                toInvert = rc.read()
                 rc.close()
                 
+                #escritura del hijo
+                os.close(rp)
                 wp = os.fdopen(wp, 'w')
-                wp.write(f'{toRead[::-1]}\n')
+                wp.write(f'{toInvert[::-1]}\n')
                 wp.close()
                 os._exit(0)
-            
-        for j in range(linesAmount):
-            os.wait()
-            print('hijo terminado')
-
+               
+        # escritura del padre
+        os.close(rc)
+        wc = os.fdopen(wc, 'w')
+        file.seek(0)
+        for line in file.readlines():
+            wc.write(f'{line.strip()}\n')
+        wc.close()
+        
+        # lectura del padre
         os.close(wp)
         rp = os.fdopen(rp, 'r')
         for phrase in rp.readlines():
-            print(f'{phrase}')
+            if phrase != '\n':
+                print(phrase.strip())
         rp.close()
+
+        file.seek(0)
+        
+        for j in range(len(file.readlines())):
+            os.wait()
 
 if __name__ == '__main__':
     main(get_args())
