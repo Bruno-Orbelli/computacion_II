@@ -28,22 +28,61 @@ def parse_args():
 
 def main(args):
     
-    with open('shared_memory.txt', 'w+') as mem:
+    with m.mmap(-1, 1024) as memory:   
         
-        memory = m.mmap(mem.fileno(), 1024)
-        sg.signal(sg.SIGUSR1, ouput_or_store())
-        
-        cpid = []
+        sg.signal(sg.SIGUSR1, sg.SIG_DFL) 
+        ppid, cpid = os.getpid(), []
+        r, w = os.pipe()     
+
         for _ in range(2):
-            proc = os.fork()
-            if not proc:
-                cpid.append(os.getpid())
+            if os.getpid() == ppid:
+                proc = os.fork()
+                cpid.append(proc)
+
+        if proc:
+            w = os.fdopen(w, 'w')
+            print(cpid)
+            w.write(f'{cpid}')
+            w.close()
+        
+        else:
+            os.close(w)
+            r = os.fdopen(r, 'r')
+            cpid = r.read()
+            print(cpid)
+            r.close()
         
         for line in s.stdin:
-            
+
+            print(line)
+
             if os.getpid() == cpid[0]: # proceso H1
+                print('hijo1')
                 memory.write(bytes(line))
                 sg.raise_signal(sg.SIGUSR1)
+                    
+            elif os.getpid() == cpid[1]: # proceso H2
+                print('hijo2')
+                for _ in range(2):
+                    sg.sigwait([sg.SIGUSR1])
+                        
+                readLine = memory.readline()
+                    
+                with open(args.file, 'w') as file:  
+                    file.write(readLine.upper())
+                    
+            else: # proceso padre
+                sg.sigwait([sg.SIGUSR1])
+                readLine = memory.readline()
+                print(readLine.decode(encoding = 'UTF-8'))
+                sg.raise_signal(sg.SIGUSR1)
+
+if __name__ == '__main__':
+    main(parse_args())
+
+
+
+
 
 
         
