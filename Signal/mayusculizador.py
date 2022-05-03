@@ -26,63 +26,54 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+def writeToMemory(s, f):
+
+    mapped.seek(0)
+    mapped.resize(len(uInput))
+    mapped.write(bytes(uInput, encoding = 'UTF-8'))
+    sg.signal(sg.SIGUSR1, sg.SIG_IGN)
+    os.kill(ppid, sg.SIGUSR1)
+
+def writeToFile(s, f):
+
+    with open(file, 'a+') as route:
+        route.write(uInput)
+
 def main(args):
+    
+    sg.signal(sg.SIGUSR1, sg.SIG_IGN)
     
     with m.mmap(-1, 1024) as memory:   
         
-        sg.signal(sg.SIGUSR1, sg.SIG_DFL) 
-        ppid, cpid = os.getpid(), []
-        r, w = os.pipe()     
-
-        for _ in range(2):
-            if os.getpid() == ppid:
-                proc = os.fork()
-                cpid.append(proc)
-
-        if proc:
-            w = os.fdopen(w, 'w')
-            print(cpid)
-            w.write(f'{cpid}')
-            w.close()
-        
-        else:
-            os.close(w)
-            r = os.fdopen(r, 'r')
-            cpid = r.read()
-            print(cpid)
-            r.close()
+        global mapped, file
+        global h1, h2, ppid
+        mapped, file = memory, args.file
+        ppid = os.getpid()
+        print(ppid)
         
         for line in s.stdin:
-
-            print(line)
-
-            if os.getpid() == cpid[0]: # proceso H1
-                print('hijo1')
-                memory.write(bytes(line))
-                sg.raise_signal(sg.SIGUSR1)
-                    
-            elif os.getpid() == cpid[1]: # proceso H2
-                print('hijo2')
-                for _ in range(2):
-                    sg.sigwait([sg.SIGUSR1])
-                        
-                readLine = memory.readline()
-                    
-                with open(args.file, 'w') as file:  
-                    file.write(readLine.upper())
-                    
-            else: # proceso padre
+            
+            global uInput
+            uInput = line
+            
+            h1 = os.fork()
+            
+            if not h1:
+                sg.signal(sg.SIGUSR1, writeToMemory) 
+                os.kill(h1, sg.SIGUSR1)
                 sg.sigwait([sg.SIGUSR1])
+                os._exit(0)
+
+            if os.getpid() == ppid:
+                mapped.seek(0)
                 readLine = memory.readline()
                 print(readLine.decode(encoding = 'UTF-8'))
-                sg.raise_signal(sg.SIGUSR1)
+                h2 = os.fork()
+
+            if not h2:
+                sg.signal(sg.SIGUSR1, writeToFile)
+                os.kill(h2, sg.SIGUSR1)
+                os._exit(0)
 
 if __name__ == '__main__':
     main(parse_args())
-
-
-
-
-
-
-        
