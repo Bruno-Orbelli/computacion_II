@@ -42,9 +42,18 @@ def writeToFile(s, f):
     with open(file, 'a+') as route:
         route.write(content)
 
+def terminationSequence(s, f):
+
+    terminate = True
+    exit()
+    os._exit(0)
+
 def main(args):
     
     sg.signal(sg.SIGUSR1, sg.SIG_IGN)
+    sg.signal(sg.SIGUSR2, terminationSequence)
+    global terminate 
+    terminate = False
     
     with m.mmap(-1, 1024) as memory:   
         
@@ -52,29 +61,38 @@ def main(args):
         global h1, h2, ppid
         mapped, file = memory, args.file
         ppid = os.getpid()
-        print(ppid)
         
         for line in s.stdin:
-            
-            global uInput
-            uInput = line
-            
-            h1 = os.fork()
-            
-            if not h1:
-                sg.signal(sg.SIGUSR1, writeToMemory) 
-                os.kill(h1, sg.SIGUSR1)
-                sg.sigwait([sg.SIGUSR1])
-                os._exit(0)
 
-            if os.getpid() == ppid:
-                print(uInput)
-                h2 = os.fork()
+            if not terminate:   
+                
+                global uInput
+                uInput = line
+                
+                h1 = os.fork()
+                
+                if not h1:           
+                    
+                    if uInput != 'bye\n':
+                        sg.signal(sg.SIGUSR1, writeToMemory) 
+                        os.kill(h1, sg.SIGUSR1)
+                        sg.sigwait([sg.SIGUSR1])
+                        os._exit(0)
+                    else:
+                        sg.raise_signal(sg.SIGUSR2)
+                        
+                if os.getpid() == ppid:
+                    print(uInput)
+                    h2 = os.fork()
 
-            if not h2:
-                sg.signal(sg.SIGUSR1, writeToFile)
-                os.kill(h2, sg.SIGUSR1)
-                os._exit(0)
+                if not h2:
+                    sg.signal(sg.SIGUSR1, writeToFile)
+                    os.kill(h2, sg.SIGUSR1)
+                    os._exit(0)
+        
+            else:          
+                while True:
+                    os._exit(0)
 
 if __name__ == '__main__':
     main(parse_args())
