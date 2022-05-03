@@ -36,8 +36,11 @@ def writeToMemory(s, f):
 
 def writeToFile(s, f):
 
+    mapped.seek(0)
+    content = mapped.readline().decode('UTF-8')
+
     with open(file, 'a+') as route:
-        route.write(uInput)
+        route.write(content)
 
 def main(args):
     
@@ -65,9 +68,7 @@ def main(args):
                 os._exit(0)
 
             if os.getpid() == ppid:
-                mapped.seek(0)
-                readLine = memory.readline()
-                print(readLine.decode(encoding = 'UTF-8'))
+                print(uInput)
                 h2 = os.fork()
 
             if not h2:
