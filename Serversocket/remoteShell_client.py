@@ -1,4 +1,4 @@
-import socket as s, argparse as arg, pickle as p, sys
+import socket as s, argparse as arg, pickle as p, time
 
 def parse_args():
 
@@ -31,9 +31,15 @@ def main(args):
             
                 out += packet
 
-                if packet == '-----------------------------\n' or packet[:5:] == 'ERROR':
+                if (packet[-3::] == 'EOF'): 
+                    out = out[:-3:]
                     break
-            
+
+                elif packet[:5:] == 'ERROR':
+                    break
+
+                out += '\n' if out[-1::] != '\n' else ''
+                
             print(f'\n{out}')
 
         goodbye = p.loads(sock.recv(4096))

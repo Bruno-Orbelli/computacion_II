@@ -1,4 +1,4 @@
-import socketserver as ss, argparse as arg, pickle as p, sys, math, time
+import socketserver as ss, argparse as arg, pickle as p, math, sys
 from subprocess import Popen, PIPE
 
 class ThreadingTCPServer(ss.ThreadingMixIn, ss.TCPServer):
@@ -26,18 +26,19 @@ class TCPShellHandler(ss.BaseRequestHandler):
             
             elif err.decode('utf-8') == '':
                 out = out.decode("utf-8")
-                print(sys.getsizeof(out))
                 
-                self.request.send(p.dumps('OK\n\n-----------------------------\n'))
+                if sys.getsizeof(out) > 4096:
+                
+                    self.request.send(p.dumps('OK\n\n-----------------------------\n'))
 
-                print(math.ceil(len(out) / 4047) + 1)
-
-                for i in range(1, math.ceil(len(out) / 4047) + 1):
-                    pack = out[4047 * (i - 1):4047 * i:]
-                    print(str(sys.getsizeof(pack)) + '\n\n\n\n' + pack)
-                    self.request.send(p.dumps(f'{pack}'))
-                    
-                self.request.send(p.dumps('-----------------------------\n'))      
+                    for i in range(1, math.ceil(len(out) / 4047) + 1):
+                        pack = out[4047 * (i - 1):4047 * i:]
+                        self.request.send(p.dumps(f'{pack}'))
+                        
+                    self.request.send(p.dumps('-----------------------------\nEOF'))      
+                
+                else:
+                    self.request.sendall(p.dumps(f'OK\n\n-----------------------------\n{out}-----------------------------\nEOF'))
             
             else:
                 self.request.sendall(p.dumps(f'ERROR\n\n{err.decode("utf-8")}'))
