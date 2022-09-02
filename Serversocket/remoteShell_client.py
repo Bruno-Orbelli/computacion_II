@@ -1,4 +1,4 @@
-import socket as s, sys, argparse as arg
+import socket as s, argparse as arg, pickle as p, sys
 
 def parse_args():
 
@@ -19,15 +19,24 @@ def main(args):
 
         while True:
             command = input('> ')
-            sock.sendall(f'{command}\n'.encode('utf-8'))
+            sock.sendall(p.dumps(f'{command}\n'))
 
             if command == 'exit':
                 break
 
-            resp = sock.recv(1024).decode('utf-8')
-            print(f'\n{resp}')
+            out = ''
+            
+            while True:
+                packet = p.loads(sock.recv(4096))
+            
+                out += packet
 
-        goodbye = sock.recv(1024).decode('utf-8')
+                if packet == '-----------------------------\n' or packet[:5:] == 'ERROR':
+                    break
+            
+            print(f'\n{out}')
+
+        goodbye = p.loads(sock.recv(4096))
         print(f'\n{goodbye}')
 
 if __name__ == '__main__':

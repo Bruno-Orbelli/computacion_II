@@ -1,4 +1,4 @@
-import socketserver as ss, argparse as arg
+import socketserver as ss, argparse as arg, pickle as p, sys, math, time
 from subprocess import Popen, PIPE
 
 class ThreadingTCPServer(ss.ThreadingMixIn, ss.TCPServer):
@@ -11,25 +11,36 @@ class TCPShellHandler(ss.BaseRequestHandler):
    
     def handle(self):
 
-       print(f'Conexión establecida con {self.client_address}.\n')
+        print(f'Conexión establecida con {self.client_address}.\n')
        
-       while True: 
-        
-        self.data = self.request.recv(1024).strip().decode('utf-8')
-        print(f'{self.client_address} escribió: "{self.data}"\n')
-        terminal = Popen(self.data, stdout = PIPE, stderr = PIPE, shell = True)
-        out, err = terminal.communicate()
-        
-        if self.data == 'exit':
-            self.request.sendall(f'GOODBYE\n'.encode("utf-8"))
-            print(f'Finalizando conexión con {self.client_address}.\n')
-            exit(0)
-        
-        elif err.decode('utf-8') == '':
-            self.request.sendall(f'OK\n\n-----------------------------\n{out.decode("utf-8")}-----------------------------\n'.encode("utf-8"))
-        
-        else:
-            self.request.sendall(f'ERROR\n\n{err.decode("utf-8")}'.encode("utf-8"))
+        while True:    
+            self.data = p.loads(self.request.recv(4096)).strip()
+            print(f'{self.client_address} escribió: "{self.data}"\n')
+            terminal = Popen(self.data, stdout = PIPE, stderr = PIPE, shell = True)
+            out, err = terminal.communicate()
+            
+            if self.data == 'exit':
+                self.request.sendall(p.dumps(f'GOODBYE\n'))
+                print(f'Finalizando conexión con {self.client_address}.\n')
+                exit(0)
+            
+            elif err.decode('utf-8') == '':
+                out = out.decode("utf-8")
+                print(sys.getsizeof(out))
+                
+                self.request.send(p.dumps('OK\n\n-----------------------------\n'))
+
+                print(math.ceil(len(out) / 4047) + 1)
+
+                for i in range(1, math.ceil(len(out) / 4047) + 1):
+                    pack = out[4047 * (i - 1):4047 * i:]
+                    print(str(sys.getsizeof(pack)) + '\n\n\n\n' + pack)
+                    self.request.send(p.dumps(f'{pack}'))
+                    
+                self.request.send(p.dumps('-----------------------------\n'))      
+            
+            else:
+                self.request.sendall(p.dumps(f'ERROR\n\n{err.decode("utf-8")}'))
 
 def parse_args():
 
