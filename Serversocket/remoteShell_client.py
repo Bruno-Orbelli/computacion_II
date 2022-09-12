@@ -1,4 +1,4 @@
-import socket as s, argparse as arg, pickle as p, time
+import socket as s, argparse as arg, pickle as p, sys
 
 def parse_args():
 
@@ -18,29 +18,35 @@ def main(args):
         print('SHELL REMOTO'.center(50, '=') + '\n')
 
         while True:
-            command = input('> ')
-            sock.sendall(p.dumps(f'{command}\n'))
+            try:
+                command = input('> ')
+                sock.sendall(p.dumps(f'{command}\n'))
 
-            if command == 'exit':
-                break
-
-            out = ''
-            
-            while True:
-                packet = p.loads(sock.recv(4096))
-            
-                out += packet
-
-                if (packet[-3::] == 'EOF'): 
-                    out = out[:-3:]
+                if command == 'exit':
                     break
 
-                elif packet[:5:] == 'ERROR':
-                    break
-
-                out += '\n' if out[-1::] != '\n' else ''
+                out = b''
                 
-            print(f'\n{out}')
+                while True:
+                    
+                        packet = sock.recv(4096)
+                        out += packet
+
+                        if sys.getsizeof(packet) <= 4096:
+                            break
+
+                out = p.loads(out)
+                out += '\n' if out[-1::] != '\n' else ''
+                print(f'\n{out}')
+            
+            except (KeyboardInterrupt, EOFError) as e:
+                        if isinstance(e, KeyboardInterrupt):
+                            print('\nCerrando cliente...\n')
+                        
+                        else:
+                            print('\nLa conexión con el servidor se ha interrumpido repentinamente.\n')
+                        
+                        exit(0)
 
         goodbye = p.loads(sock.recv(4096))
         print(f'\n{goodbye}')

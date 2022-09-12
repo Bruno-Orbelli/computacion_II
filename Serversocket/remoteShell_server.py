@@ -1,4 +1,4 @@
-import socketserver as ss, argparse as arg, pickle as p, math, sys
+import socketserver as ss, argparse as arg, pickle as p, sys
 from subprocess import Popen, PIPE
 
 class ThreadingTCPServer(ss.ThreadingMixIn, ss.TCPServer):
@@ -8,40 +8,38 @@ class ForkingTCPServer(ss.ForkingMixIn, ss.TCPServer):
     pass
 
 class TCPShellHandler(ss.BaseRequestHandler):
-   
+    
     def handle(self):
 
         print(f'Conexión establecida con {self.client_address}.\n')
        
-        while True:    
-            self.data = p.loads(self.request.recv(4096)).strip()
-            print(f'{self.client_address} escribió: "{self.data}"\n')
-            terminal = Popen(self.data, stdout = PIPE, stderr = PIPE, shell = True)
-            out, err = terminal.communicate()
+        while True:   
             
-            if self.data == 'exit':
-                self.request.sendall(p.dumps(f'GOODBYE\n'))
-                print(f'Finalizando conexión con {self.client_address}.\n')
-                exit(0)
-            
-            elif err.decode('utf-8') == '':
-                out = out.decode("utf-8")
+            try:
+                self.data = p.loads(self.request.recv(4096)).strip()
+                print(f'{self.client_address} escribió: "{self.data}"\n')
+                terminal = Popen(self.data, stdout = PIPE, stderr = PIPE, shell = True)
+                out, err = terminal.communicate()
                 
-                if sys.getsizeof(out) > 4096:
+                if self.data == 'exit':
+                    self.request.sendall(p.dumps(f'GOODBYE\n'))
+                    print(f'Finalizando conexión con {self.client_address}.\n')
+                    exit(0)
                 
-                    self.request.send(p.dumps('OK\n\n-----------------------------\n'))
-
-                    for i in range(1, math.ceil(len(out) / 4047) + 1):
-                        pack = out[4047 * (i - 1):4047 * i:]
-                        self.request.send(p.dumps(f'{pack}'))
-                        
-                    self.request.send(p.dumps('-----------------------------\nEOF'))      
+                elif err.decode('utf-8') == '':
+                    out = out.decode("utf-8")
+                    msg = p.dumps(f'OK\n\n-----------------------------\n{out}-----------------------------\n', protocol = p.HIGHEST_PROTOCOL)
+                    self.request.sendall(msg)
                 
                 else:
-                    self.request.sendall(p.dumps(f'OK\n\n-----------------------------\n{out}-----------------------------\nEOF'))
+                    msg = p.dumps(f'ERROR\n\n{err.decode("utf-8")}')
+                    self.request.sendall(msg)
+                
+                print(f'Enviando {sys.getsizeof(msg)}B a {self.client_address}.\n')
             
-            else:
-                self.request.sendall(p.dumps(f'ERROR\n\n{err.decode("utf-8")}'))
+            except (EOFError, ConnectionResetError):
+                print(f'Conexión finalizada inesperadamente con {self.client_address}.\n')
+                exit(0)
 
 def parse_args():
 
@@ -51,6 +49,7 @@ def parse_args():
     parser.add_argument('-p', '--port', type = int, default = 0, help = "número del puerto en el que se hostea el servidor")
     parser.add_argument('-c', '--conc', required = True, choices = ['p', 't'], help = """mecanismo de concurrencia empleado por el servidor: multiproceso (p)
     o multihilo (t)""")
+    parser.add_argument('-v', '--verbose', action = "store_true", help = "muestra información adicional de los paquetes y el funcionamiento del servidor.")
 
     return parser.parse_args()
 
@@ -66,7 +65,12 @@ def main(args):
         print(f'Server "{HOST}" ({server.server_address[0]}) levantado y hosteado en el puerto {server.server_address[1]}.')
         print('Esperando conexiones...\n')
         
-        server.serve_forever()
+        try:
+            server.serve_forever()
+        
+        except KeyboardInterrupt:
+            print('\nApagando el servidor...\n')
+            server.shutdown()
 
 if __name__ == '__main__':
     main(parse_args())
