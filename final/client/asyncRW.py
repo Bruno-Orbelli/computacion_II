@@ -1,12 +1,25 @@
-import sqlite3, re
+import sqlite3, mysql.connector
 from asyncio import create_task, gather, run
 
-async def read_tables(dbPath: str, dbType: str, tablesLimitOffset: 'dict[str, tuple[int]]') -> dict:
+async def get_connection(dbType: str, dbPath: str = None, user: str = None, password: str = None, host: str = "localhost", dbName: str = None):    
+    if dbType == 'sqlite':
+        return sqlite3.connect(dbPath, 2)
+    elif dbType == 'mysql':
+        return mysql.connector.connect(
+            user= user,
+            password= password,
+            host= host,
+            database= dbName
+        )
+
+async def read_tables(dbPath: str, dbType: str, additionalData: dict, tablesLimitOffset: 'dict[str, tuple[int]]') -> dict:
     '''
     Crear un switch para instanciar la conexión adecuada según el tipo
     de base de datos.
     '''
-    with sqlite3.connect(dbPath, 2) as connection: 
+    with await get_connection(
+        dbType, dbPath, additionalData["user"], additionalData["password"], additionalData["host"], additionalData["dbName"]
+        ) as connection: 
         cursor = connection.cursor()
         tasks = [
             create_task(build_table_data(name, dbType, rowLimitOffset, cursor))
@@ -15,7 +28,18 @@ async def read_tables(dbPath: str, dbType: str, tablesLimitOffset: 'dict[str, tu
         data = await gather(*tasks)
         cursor.close()
 
-async def build_table_data(tableName: str, dbType: str, rowLimitOffset: 'tuple[int]', cursor: sqlite3.Cursor) -> 'dict[str, list[tuple]]':
+'''async def execute_query(dbType: str, query: str, rowLimitOffset: 'tuple[int]', cursor) -> list:
+    sqlDict = {
+        "sqlite": cursor.execute,
+        "":""
+    }
+    '''
+    Diccionario con el comando de ejecución adecuado, indexado por el
+    tipo de base de datos (SQLite, MySQL, ...)
+    '''
+    pass'''
+
+async def build_table_data(tableName: str, dbType: str, rowLimitOffset: 'tuple[int]', cursor) -> 'dict[str, list[tuple]]':
     '''
     Controlar con regex el tipo de base de datos y el nombre de la tabla
     para evitar inyección SQL
