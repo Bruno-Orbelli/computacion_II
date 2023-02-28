@@ -11,7 +11,7 @@
 ## Funcionamiento
 + El cliente provee tanto una interfaz de línea de comandos como una interfaz gráfica, donde se puede especificar o cargar, como argumentos, los paths de los archivos de base de datos. 
 + Los archivos especificados son leídos en forma asincrónica en el extremo cliente y enviados como un flujo de datos al extremo servidor, junto con el/los tipos de conversión a realizar y las restricciones adicionales a tener en cuenta. 
-+ El servidor utiliza un pool de workers para trabajar en forma paralela en las diferentes tablas/documentos y convierte los archivos adecuadamente, loggeando cada interacción. 
++ El servidor utiliza un pool de workers para trabajar en forma paralela en las diferentes tablas/colecciones y convierte los archivos adecuadamente, loggeando cada interacción. 
 + El flujo de datos convertido es enviado al extremo cliente, que los escribe como un nuevo archivo de base de datos.
 
 ***
