@@ -21,17 +21,17 @@
 + Bloque de código principal del servidor.
 + Identifica la/s operación/es a realizar, envía las tareas en forma de mensajes a una cola de tareas e interacúa con el logger para almacenar la actividad ocurrida.
 
-## Broker de mensajes
+### Broker de mensajes
 + Implementa una cola de tareas utilizando Reddis, de la cual consumen los diferentes workers disponibles en el servidor.
 + Cada tarea se corresponde con una tabla/colección de la base de datos a convertir.
 
-## Pool de workers
+### Pool de workers
 + Consume los mensajes del broker, efectuando las conversiones en forma paralela sobre las diferentes tablas/colecciones.
 + Utiliza Celery.
 
-## Módulo de operaciones
+### Módulo de operaciones
 + Contiene las diferentes operaciones de conversión que los workers pueden realizar sobre una tabla/colección.
 
-## Logger de interacciones
+### Logger de interacciones
 + Logea, en forma asincrónica, la actividad del servidor.
 + Implementa una cola de loggeos pendientes, con la información de los eventos a ser escritos en el log.
