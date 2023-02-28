@@ -1,7 +1,5 @@
 ## Cliente
 
-***
-
 ### CLI / GUI
 + Recibe la lista de documentos a convertir y provee opciones de conversión al cliente (formato destino, exportar/no exportar índices, parte de la base de datos/totalidad de la base de datos).
 
@@ -11,9 +9,10 @@
 ### Receptor y emisor de datos
 + Emite y recibe la información de las bases e información de control adicional desde y hacia el servidor, en la forma de flujo de datos.
 
+***
+
 ## Servidor
 
-***
 
 ### Receptor y emisor de datos
 + Emite y recibe la información de las bases e información de control adicional desde y hacia el cliente, en la forma de flujo de datos.
