@@ -25,9 +25,8 @@ async def build_table_data(tableName: str, dbType: str, rowLimitOffset: 'tuple[i
 
     cursor.execute(SQLQuery, (tableName,))
     tableSQL = cursor.fetchall()
-    constraints = re.findall(r'(PRIMARY KEY \(\`*\`\)$)||(FOREIGN KEY \(\`*\`\)$)', str(tableSQL))
-    
-    dataQuery = f"SELECT * FROM {tableName}"
+        
+    dataQuery = f"SELECT * FROM [{tableName}]"
         
     if rowLimitOffset != (None, None):
         dataQuery += " LIMIT ? OFFSET ?"      
@@ -43,8 +42,8 @@ async def build_table_data(tableName: str, dbType: str, rowLimitOffset: 'tuple[i
     tableData.insert(0, cols)
     
     return {
-        tableName: tableData
+        tableName: (tableData, tableSQL)
     }
 
 if __name__ == "__main__":
-    run(read_tables("/home/brunengo/Escritorio/northwind.db", "sqlite", {"Employees": (20, None)}))
+    run(read_tables("/home/brunengo/Escritorio/northwind.db", "sqlite", {"Order Details": (20, None)}))
