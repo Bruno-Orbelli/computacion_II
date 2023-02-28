@@ -15,7 +15,7 @@ async def aw_input():  # funcion encargada de esperar la entrada por parte del u
         return input('> ')
 
     except KeyboardInterrupt:
-        print('\nCerrando cliente...\n')                            
+        print('\nCerrando cliente...\n')
         exit(0)
 
 async def main(args):
