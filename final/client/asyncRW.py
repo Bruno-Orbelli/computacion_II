@@ -29,16 +29,7 @@ async def read_tables(dbPath: str, dbType: str, additionalData: dict = None, tab
         print(data)
         cursor.close()
 
-'''async def execute_query(dbType: str, query: str, rowLimitOffset: 'tuple[int]', cursor) -> list:
-    sqlDict = {
-        "sqlite": cursor.execute,
-        "":""
-    }
-    Diccionario con el comando de ejecución adecuado, indexado por el
-    tipo de base de datos (SQLite, MySQL, ...)
-    pass'''
-
-async def get_cursor_data(cursor) -> dict:
+async def get_cursor_data(cursor) -> list:
     return cursor.fetchall()
 
 async def run_query(query: str, cursor, params: tuple = None) -> None:
@@ -48,7 +39,7 @@ async def run_query(query: str, cursor, params: tuple = None) -> None:
     else:
         cursor.execute(query)
 
-async def build_table_data(tableName: str, dbType: str, cursor, rowLimitOffset: 'tuple[int]' = None) -> 'dict[str, list[tuple]]':
+async def build_table_data(tableName: str, dbType: str, cursor, rowLimitOffset: 'tuple[int]' = None) -> 'dict[str, tuple[list]]':
     '''
     Controlar con regex el tipo de base de datos y el nombre de la tabla
     para evitar inyección SQL
@@ -58,16 +49,17 @@ async def build_table_data(tableName: str, dbType: str, cursor, rowLimitOffset: 
         "sqlite": f"SELECT sql FROM {dbType}_master WHERE type='table' and name={tableName}",
         "mysql": f"SHOW CREATE TABLE {tableName}"
     } 
-
     await run_query(SQLQueries[dbType], cursor)
     tableSQL = await get_cursor_data(cursor)
-
-    print(tableSQL)
         
-    dataQuery = f"SELECT * FROM [{tableName}]"
+    dataQueries = {
+        "sqlite": f"SELECT * FROM [{tableName}]",
+        "mysql": f"SELECT * FROM {tableName}"
+    }
+    dataQuery = dataQueries[dbType]
         
     if rowLimitOffset:
-        dataQuery += {"sqlite": " LIMIT ? OFFSET ?", "mysql": " LIMIT %s OFFSET %s"
+        dataQuery += {"sqlite": " LIMIT ? OFFSET ?", "mysql": " LIMIT %s, %s"}[dbType]
         if rowLimitOffset[1] is None:
             rowLimitOffset = (rowLimitOffset[0], 0)
         print(dataQuery, rowLimitOffset)
@@ -76,7 +68,7 @@ async def build_table_data(tableName: str, dbType: str, cursor, rowLimitOffset: 
         await run_query(dataQuery, cursor)
     
     cols = tuple([description[0] for description in cursor.description])
-    tableData = await get_cursor_data(dbType, cursor)
+    tableData = await get_cursor_data(cursor) 
     
     tableData.insert(0, cols)
     
