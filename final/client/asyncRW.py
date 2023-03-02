@@ -1,33 +1,46 @@
-import sqlite3, mysql.connector
+import sqlite3, mysql.connector, psycopg2
+from subprocess import Popen, PIPE
 from asyncio import create_task, gather, run
+from queries import dbStructureQueries, dataQueries, limitOffsetAppend
 
-async def get_connection(dbType: str, dbPath: str = None, aditionalData: dict = None):    
-    if dbType == 'sqlite':
+async def get_connection(dbType: str, dbPath: str = None, additionalData: dict = None):
+    if dbType == "sqlite":
         return sqlite3.connect(dbPath, 2)
-    elif dbType == 'mysql':
+    elif dbType == "mysql":
         return mysql.connector.connect(
-            user= aditionalData["user"],
-            password= aditionalData["password"],
-            host= aditionalData["host"],
-            database= aditionalData["dbName"]
+            user= additionalData["user"],
+            password= additionalData["password"],
+            host= additionalData["host"],
+            database= additionalData["dbName"],
+            port= additionalData["port"]
+        )
+    elif dbType == "postgresql":
+        return psycopg2.connect(
+            user= additionalData["user"],
+            password= additionalData["password"],
+            host= additionalData["host"],
+            database= additionalData["dbName"],
+            port= additionalData["port"]
         )
     else: #raise Exception
         pass
 
-async def read_tables(dbPath: str, dbType: str, additionalData: dict = None, tablesLimitOffset: 'dict[str, tuple[int]]' = None) -> dict:
-    '''
-    Crear un switch para instanciar la conexión adecuada según el tipo
-    de base de datos.
-    '''
-    with await get_connection(dbType, dbPath, additionalData) as connection: 
-        cursor = connection.cursor(buffered= True)
-        tasks = [
-            create_task(build_table_data(name, dbType, cursor, rowLimitOffset))
-            for name, rowLimitOffset in tablesLimitOffset.items()
-            ]
-        data = await gather(*tasks)
-        print(data)
-        cursor.close()
+async def get_cursor(dbType: str, connObject):
+    if dbType != "mysql":
+        return connObject.cursor()
+    else:
+        return connObject.cursor(buffered= True)
+
+async def read_tables(dbType: str, dbPath: str, additionalData: dict = None, tablesLimitOffset: 'dict[str, tuple[int]]' = None) -> dict:
+        with await get_connection(dbType, dbPath, additionalData) as connection:
+            cursor = await get_cursor(dbType, connection)
+            tasks = [
+                create_task(build_table_data(dbType, tableName, cursor, additionalData, LimitOffset))
+                for tableName, LimitOffset in tablesLimitOffset.items()
+                ]
+            data = await gather(*tasks)
+            print(data)
+            cursor.close()
 
 async def get_cursor_data(cursor) -> list:
     return cursor.fetchall()
@@ -39,31 +52,29 @@ async def run_query(query: str, cursor, params: tuple = None) -> None:
     else:
         cursor.execute(query)
 
-async def build_table_data(tableName: str, dbType: str, cursor, rowLimitOffset: 'tuple[int]' = None) -> 'dict[str, tuple[list]]':
+async def build_table_data(dbType: str, tableName: str, cursor, additionalData: dict = None, LimitOffset: 'tuple[int]' = None) -> 'dict[str, tuple[list]]':
     '''
     Controlar con regex el tipo de base de datos y el nombre de la tabla
     para evitar inyección SQL
     '''
     
-    SQLQueries = {
-        "sqlite": f"SELECT sql FROM {dbType}_master WHERE type='table' and name={tableName}",
-        "mysql": f"SHOW CREATE TABLE {tableName}"
-    } 
-    await run_query(SQLQueries[dbType], cursor)
-    tableSQL = await get_cursor_data(cursor)
+    if dbType != "postgresql":
+        structQuery = dbStructureQueries[dbType].format(tableName)
+        await run_query(structQuery, cursor)
+        tableSQL = await get_cursor_data(cursor)
+    
+    else:
+        process = Popen(f"pg_dump -U {additionalData['user']} -t 'public.{tableName}' --schema-only {additionalData['dbName']}", stdout= PIPE, shell= True) # Escribir guia de uso para POSTGRESQL (set en modo TRUST)
+        tableSQL = str(process.communicate()[0])
         
-    dataQueries = {
-        "sqlite": f"SELECT * FROM [{tableName}]",
-        "mysql": f"SELECT * FROM {tableName}"
-    }
-    dataQuery = dataQueries[dbType]
+    dataQuery = dataQueries[dbType].format(tableName)
         
-    if rowLimitOffset:
-        dataQuery += {"sqlite": " LIMIT ? OFFSET ?", "mysql": " LIMIT %s, %s"}[dbType]
-        if rowLimitOffset[1] is None:
-            rowLimitOffset = (rowLimitOffset[0], 0)
-        print(dataQuery, rowLimitOffset)
-        await run_query(dataQuery, cursor, rowLimitOffset)
+    if LimitOffset:
+        dataQuery += limitOffsetAppend[dbType]
+        if LimitOffset[1] is None:
+            LimitOffset = (LimitOffset[0], 0)
+        print(dataQuery, LimitOffset)
+        await run_query(dataQuery, cursor, LimitOffset)
     else:
         await run_query(dataQuery, cursor)
     
@@ -77,4 +88,4 @@ async def build_table_data(tableName: str, dbType: str, cursor, rowLimitOffset: 
     }
 
 if __name__ == "__main__":
-    run(read_tables("/home/brunengo/Escritorio/northwind.db", "mysql", additionalData={"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels"}, tablesLimitOffset= {"customers": (20, None)}))
+    run(read_tables("mysql", "/home/brunengo/Escritorio/northwind.db", additionalData={"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306}, tablesLimitOffset= {"customers": (20, None)}))
