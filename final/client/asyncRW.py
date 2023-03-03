@@ -1,25 +1,24 @@
-import pyodbc
+import pyodbc, pymongo
 from subprocess import Popen, PIPE
 from asyncio import create_task, gather, run
 
-from queries import dbStructureQueries, dataQueries
+from queries import SQLDbStructureQueries, SQLdataQueries, mongodbAvailableQueryElems
 from connectionData import drivers, connStrs
 
+# SQL
+
 async def get_connection(dbType: str, dbPath: str = None, additionalData: dict = None):
-    # print(pyodbc.drivers())
-    
-    if dbType not in drivers:
-        # raise Exception -- "No drivers found for 'dbType' type databases."
+    if dbType not in connStrs:
+        # raise Exception -- "Database type 'dbType' is not currently supported."
         return
     else:
         connectionStr = connStrs[dbType]
-        if dbType == "sqlite3":
-            connectionStr = connectionStr.format(dbPath)
-        elif dbType in ("mysql", "postgresql"):
+        if dbType in ("mysql", "postgresql"):
             connectionStr = connectionStr.format(**additionalData)
+        elif dbType == "sqlite3":
+            connectionStr = connectionStr.format(dbPath)
     
     connectionStr = f"DRIVER={{{drivers[dbType]}}};" + connectionStr
-    print(connectionStr)
     return pyodbc.connect(connectionStr)
     
 async def get_cursor(connObject):
@@ -33,10 +32,15 @@ async def read_tables(dbType: str, dbPath: str, additionalData: dict = None, tab
                 for tableName, LimitOffset in tablesLimitOffset.items()
                 ]
             data = await gather(*tasks)
-            print(data)
             cursor.close()
+            return data
 
-async def run_query_and_get_result(query: str, cursor, *params: int) -> list:
+async def get_postgresql_structure(additionalData: dict, tableName: str) -> str:
+    # Escribir guia de uso para POSTGRESQL (set en modo TRUST)
+    process = Popen(f"pg_dump -U {additionalData['user']} -t 'public.{tableName}' --schema-only {additionalData['dbName']}", stdout= PIPE, shell= True)
+    return str(process.communicate()[0])
+
+async def run_SQLquery_and_get_result(query: str, cursor, *params) -> list:
     if params:
         cursor.execute(query, params)
     else:
@@ -44,30 +48,27 @@ async def run_query_and_get_result(query: str, cursor, *params: int) -> list:
     
     return cursor.fetchall()
 
-async def build_table_data(dbType: str, tableName: str, cursor, additionalData: dict = None, LimitOffset: 'tuple[int]' = None) -> 'dict[str, tuple[list]]':
+async def build_table_data(dbType: str, tableName: str, cursor, additionalData: dict = None, limitOffset: 'tuple[int]' = None) -> 'dict[str, tuple[list]]':
     '''
     Controlar con regex el tipo de base de datos y el nombre de la tabla
     para evitar inyección SQL
     '''
     
     if dbType != "postgresql":
-        structQuery = dbStructureQueries[dbType].format(tableName)
-        tableSQL = await run_query_and_get_result(structQuery, cursor)
-    
+        structQuery = SQLDbStructureQueries[dbType].format(tableName)
+        tableSQL = await run_SQLquery_and_get_result(structQuery, cursor)
     else:
-        process = Popen(f"pg_dump -U {additionalData['user']} -t 'public.{tableName}' --schema-only {additionalData['dbName']}", stdout= PIPE, shell= True) # Escribir guia de uso para POSTGRESQL (set en modo TRUST)
-        tableSQL = str(process.communicate()[0])
+        tableSQL = await get_postgresql_structure(additionalData, tableName)
         
-    dataQuery = dataQueries[dbType].format(tableName)
+    dataQuery = SQLdataQueries[dbType].format(tableName)
         
-    if LimitOffset:
+    if limitOffset:
         dataQuery += " LIMIT ? OFFSET ?"
-        if LimitOffset[1] is None:
-            LimitOffset = (LimitOffset[0], 0)
-        print(dataQuery, LimitOffset)
-        tableData = await run_query_and_get_result(dataQuery, cursor, LimitOffset[0], LimitOffset[1])
+        if limitOffset[1] is None:
+            limitOffset = (limitOffset[0], 0)
+        tableData = await run_SQLquery_and_get_result(dataQuery, cursor, limitOffset[0], limitOffset[1])
     else:
-        tableData = await run_query_and_get_result(dataQuery, cursor)
+        tableData = await run_SQLquery_and_get_result(dataQuery, cursor)
     
     cols = tuple([description[0] for description in cursor.description])
     tableData.insert(0, cols)
@@ -76,5 +77,37 @@ async def build_table_data(dbType: str, tableName: str, cursor, additionalData: 
         tableName: (tableData, tableSQL)
     }
 
+# NoSQL
+
+async def get_mongo_client(additionalData: dict = None) -> pymongo.MongoClient:
+    return pymongo.MongoClient(connStrs["mongodb"].format(**additionalData))
+
+async def read_collections(additionalData: dict = None, collectionLimitSkip: 'dict[str, tuple[int]]' = None) -> dict:
+        with await get_mongo_client(additionalData) as client:
+            tasks = [
+                create_task(build_collection_data(collectionName, client, additionalData, LimitSkip))
+                for collectionName, LimitSkip in collectionLimitSkip.items()
+                ]
+            data = await gather(*tasks)
+            return data
+
+async def run_mongoquery_and_get_result(queryElems: list, collectionObject, *params):
+    queryObj = f"collectionObject" + "".join(mongodbAvailableQueryElems[elem] for elem in queryElems).format(*params)
+    return eval(queryObj)
+
+async def build_collection_data(collectionName: str, client: pymongo.MongoClient, additionalData: dict = None, limitSkip: 'tuple[int]' = None) -> 'dict[str, list]':
+    collection = client[additionalData['dbName']][collectionName]
+
+    if limitSkip:
+        if limitSkip[1] is None:
+            limitSkip = (limitSkip[0], 0)
+        collectionData = await run_mongoquery_and_get_result(["find", "limit", "skip"], collection, limitSkip[0], limitSkip[1])
+    else:
+        collectionData = await run_mongoquery_and_get_result(["find"], collection)
+    
+    return {
+        collectionName: list(collectionData)
+    }
+
 if __name__ == "__main__":
-    run(read_tables("postgresql", "/home/brunengo/Escritorio/northwind.db", additionalData={"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, tablesLimitOffset= {"actor": (20, None)}))
+    run(read_collections(additionalData= {"user": "dbdummy", "password": "mongo", "host": "localhost", "dbName": "books", "port": 27017}, collectionLimitSkip= {"books": (20, None)}))
