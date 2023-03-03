@@ -11,6 +11,6 @@ dataQueries = {
 
 limitOffsetAppend = {
     "sqlite": r" LIMIT ? OFFSET ?", 
-    "mysql": r" LIMIT %s, %s",
+    "mysql": r" LIMIT ? OFFSET ?",
     "postgresql": r" LIMIT %s OFFSET %s"
 }

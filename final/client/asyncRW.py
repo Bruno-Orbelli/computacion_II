@@ -1,35 +1,32 @@
-import sqlite3, mysql.connector, psycopg2
+import pyodbc
 from subprocess import Popen, PIPE
 from asyncio import create_task, gather, run
 from queries import dbStructureQueries, dataQueries, limitOffsetAppend
+from connectionData import drivers, connStrs
 
 async def get_connection(dbType: str, dbPath: str = None, additionalData: dict = None):
-    if dbType == "sqlite":
-        return sqlite3.connect(dbPath, 2)
-    elif dbType == "mysql":
-        return mysql.connector.connect(
-            user= additionalData["user"],
-            password= additionalData["password"],
-            host= additionalData["host"],
-            database= additionalData["dbName"],
-            port= additionalData["port"]
-        )
-    elif dbType == "postgresql":
-        return psycopg2.connect(
-            user= additionalData["user"],
-            password= additionalData["password"],
-            host= additionalData["host"],
-            database= additionalData["dbName"],
-            port= additionalData["port"]
-        )
-    else: #raise Exception
-        pass
-
+    # print(pyodbc.drivers())
+    
+    if dbType not in drivers:
+        # raise Exception -- "No drivers found for 'dbType' type databases."
+        return
+    else:
+        connectionStr = connStrs[dbType]
+        if dbType == "sqlite3":
+            connectionStr = connectionStr.format(dbPath)
+        elif dbType == "mysql":
+            connectionStr = connectionStr.format(**additionalData)
+        elif dbType == "postgresql":
+            pass
+    
+    connectionStr = f"DRIVER={{{drivers[dbType]}}};" + connectionStr
+    return pyodbc.connect(connectionStr)
+    
 async def get_cursor(dbType: str, connObject):
     if dbType != "mysql":
         return connObject.cursor()
     else:
-        return connObject.cursor(buffered= True)
+        return connObject.cursor()
 
 async def read_tables(dbType: str, dbPath: str, additionalData: dict = None, tablesLimitOffset: 'dict[str, tuple[int]]' = None) -> dict:
         with await get_connection(dbType, dbPath, additionalData) as connection:
@@ -45,7 +42,7 @@ async def read_tables(dbType: str, dbPath: str, additionalData: dict = None, tab
 async def get_cursor_data(cursor) -> list:
     return cursor.fetchall()
 
-async def run_query(query: str, cursor, params: tuple = None) -> None:
+async def run_query(query: str, cursor, *params: int) -> None:
     print(query)
     if params:
         cursor.execute(query, params)
@@ -74,7 +71,7 @@ async def build_table_data(dbType: str, tableName: str, cursor, additionalData: 
         if LimitOffset[1] is None:
             LimitOffset = (LimitOffset[0], 0)
         print(dataQuery, LimitOffset)
-        await run_query(dataQuery, cursor, LimitOffset)
+        await run_query(dataQuery, cursor, LimitOffset[0], LimitOffset[1])
     else:
         await run_query(dataQuery, cursor)
     
