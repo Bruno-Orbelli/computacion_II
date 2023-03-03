@@ -49,11 +49,7 @@ async def run_SQLquery_and_get_result(query: str, cursor, *params) -> list:
     return cursor.fetchall()
 
 async def build_table_data(dbType: str, tableName: str, cursor, additionalData: dict = None, limitOffset: 'tuple[int]' = None) -> 'dict[str, tuple[list]]':
-    '''
-    Controlar con regex el tipo de base de datos y el nombre de la tabla
-    para evitar inyección SQL
-    '''
-    
+   
     if dbType != "postgresql":
         structQuery = SQLDbStructureQueries[dbType].format(tableName)
         tableSQL = await run_SQLquery_and_get_result(structQuery, cursor)
@@ -110,4 +106,4 @@ async def build_collection_data(collectionName: str, client: pymongo.MongoClient
     }
 
 if __name__ == "__main__":
-    run(read_collections(additionalData= {"user": "dbdummy", "password": "mongo", "host": "localhost", "dbName": "books", "port": 27017}, collectionLimitSkip= {"books": (20, None)}))
+    run(read_tables("mysql", "/home/brunengo/Escritorio/Proshecto/northwind.db", additionalData= {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306}, tablesLimitOffset= {"customers": (20, None)}))
