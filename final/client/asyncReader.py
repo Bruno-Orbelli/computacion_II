@@ -2,14 +2,13 @@ import pyodbc, pymongo
 from subprocess import Popen, PIPE
 from asyncio import create_task, gather, run
 
-from queries import SQLDbStructureQueries, SQLdataQueries, mongodbAvailableQueryElems
+from queries import SQLDbStructureQueries, SQLdataQueries, SQLViewQueries, mongodbAvailableQueryElems
 from connectionData import drivers, connStrs
 from exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError
 
 # SQL
 
 async def get_connection(dbType: str, dbPath: str = None, additionalParams: dict = None):
-    
     if dbType not in connStrs:
         raise UnsupportedDBTypeError(f"Unsupported or unexisting database type '{dbType}'.")
     else:
@@ -46,7 +45,7 @@ async def get_cursor_description(cursor):
     except pyodbc.Error:
         raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
 
-async def read_tables(dbType: str, dbPath: str, additionalParams: dict = None, tablesLimitOffset: 'dict[str, tuple[int]]' = None) -> dict:
+async def read_tables(dbType: str, dbPath: str = None, additionalParams: dict = None, tablesLimitOffset: 'dict[str, tuple[int]]' = None) -> dict:
     try:
         with await get_connection(dbType, dbPath, additionalParams) as connection:
             cursor = await get_cursor(connection)
@@ -54,6 +53,28 @@ async def read_tables(dbType: str, dbPath: str, additionalParams: dict = None, t
                 create_task(build_table_data(dbType, tableName, cursor, additionalParams, LimitOffset))
                 for tableName, LimitOffset in tablesLimitOffset.items()
                 ]
+            data = await gather(*tasks)
+            cursor.close()
+            return data
+    
+    except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
+        raise
+
+async def read_views(dbType: str, dbPath: str = None, additionalParams: dict = None, viewsName: list = None):
+    # Investigar creación de views en Mongo
+    try:
+        with await get_connection(dbType, dbPath, additionalParams) as connection:
+            cursor = await get_cursor(connection)
+            if dbType != "mongodb":
+                tasks = [
+                    create_task(build_SQLview_data(dbType, viewName, cursor, additionalParams))
+                    for viewName in viewsName
+                    ]
+            else:
+                tasks = [
+                    create_task(build_mongoview_data(dbType, viewName, cursor, additionalParams))
+                    for viewName in viewsName
+                    ]
             data = await gather(*tasks)
             cursor.close()
             return data
@@ -114,6 +135,20 @@ async def build_table_data(dbType: str, tableName: str, cursor, additionalParams
     return {
         tableName: (tableData, tableSQL)
     }
+
+async def build_SQLview_data(dbType: str, viewName: str, cursor, additionalParams: dict = None) -> 'dict[str, list]':
+    try:
+        viewQuery = SQLViewQueries[dbType].format(viewName)
+        viewData = await run_SQLquery_and_get_result(viewQuery, cursor)
+    
+    except (ExecutionError, ConnectionError) as e:
+        if isinstance(e, ConnectionError):
+            e.args = (e.args[0].format(**additionalParams),)
+        raise
+
+    return {
+        viewName: viewData    
+        }
 
 # NoSQL
 

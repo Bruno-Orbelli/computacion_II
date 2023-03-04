@@ -9,6 +9,11 @@ SQLdataQueries = {
     "postgresql": r'SELECT * FROM "{0}"',
 }
 
+SQLViewQueries = {
+    "sqlite3": r"SELECT sql FROM sqlite_master WHERE type='view' and name='{0}'",
+    "mysql": r"SHOW CREATE VIEW {0}"
+}
+
 mongodbAvailableQueryElems = {
     "find": ".find()",
     "limit": ".limit({0})",
