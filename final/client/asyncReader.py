@@ -44,7 +44,7 @@ async def get_cursor_description(cursor):
     try:
         return [description[0] for description in cursor.description]
     except pyodbc.Error:
-        raise ConnectionError
+        raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
 
 async def read_tables(dbType: str, dbPath: str, additionalParams: dict = None, tablesLimitOffset: 'dict[str, tuple[int]]' = None) -> dict:
     try:
