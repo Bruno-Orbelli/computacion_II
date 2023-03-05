@@ -1,8 +1,9 @@
 import pyodbc, pymongo
 from subprocess import Popen, PIPE
 from asyncio import create_task, gather, run
+from re import match
 
-from queries import SQLDbStructureQueries, SQLdataQueries, SQLViewQueries, mongodbAvailableQueryElems
+from queries import SQLDbStructureQueries, SQLDataQueries, SQLViewQueries, SQLIndexQueries, mongodbAvailableQueryElems
 from connectionData import drivers, connStrs
 from exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError
 
@@ -67,14 +68,37 @@ async def read_views(dbType: str, dbPath: str = None, additionalParams: dict = N
             cursor = await get_cursor(connection)
             if dbType != "mongodb":
                 tasks = [
-                    create_task(build_SQLview_data(dbType, viewName, cursor, additionalParams))
+                    create_task(build_SQL_view_data(dbType, viewName, cursor, additionalParams))
                     for viewName in viewsName
                     ]
             else:
-                tasks = [
-                    create_task(build_mongoview_data(dbType, viewName, cursor, additionalParams))
+                pass
+                '''tasks = [
+                    create_task(build_mongo_view_data(dbType, viewName, cursor, additionalParams))
                     for viewName in viewsName
+                    ]'''
+            data = await gather(*tasks)
+            cursor.close()
+            return data
+    
+    except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
+        raise
+
+async def read_index(dbType: str, dbPath: str = None, additionalParams: dict = None, indexesTables: 'dict[str, str]' = None):
+    try:
+        with await get_connection(dbType, dbPath, additionalParams) as connection:
+            cursor = await get_cursor(connection)
+            if dbType != "mongodb":
+                tasks = [
+                    create_task(build_SQL_index_data(dbType, indexName, tableName, cursor, additionalParams))
+                    for indexName, tableName in indexesTables.items()
                     ]
+            else:
+                pass
+                '''tasks = [
+                    create_task(build_mongo_index_data(dbType, indexName, cursor, additionalParams))
+                    for viewName in viewsName
+                    ]'''
             data = await gather(*tasks)
             cursor.close()
             return data
@@ -91,7 +115,7 @@ async def get_postgresql_structure(additionalParams: dict, tableName: str) -> st
             )
     return str(process.communicate()[0])
 
-async def run_SQLquery_and_get_result(query: str, cursor, *params) -> list:
+async def run_SQL_query_and_get_result(query: str, cursor, *params) -> list:
     try:
         if params:
             cursor.execute(query, params)
@@ -110,19 +134,19 @@ async def build_table_data(dbType: str, tableName: str, cursor, additionalParams
     try:
         if dbType != "postgresql":
             structQuery = SQLDbStructureQueries[dbType].format(tableName)
-            tableSQL = await run_SQLquery_and_get_result(structQuery, cursor)
+            tableSQL = await run_SQL_query_and_get_result(structQuery, cursor)
         else:
             tableSQL = await get_postgresql_structure(additionalParams, tableName)
         
-        dataQuery = SQLdataQueries[dbType].format(tableName)
+        dataQuery = SQLDataQueries[dbType].format(tableName)
             
         if limitOffset:
             dataQuery += " LIMIT ? OFFSET ?"
             if limitOffset[1] is None:
                 limitOffset = (limitOffset[0], 0)
-                tableData = await run_SQLquery_and_get_result(dataQuery, cursor, limitOffset[0], limitOffset[1])
+                tableData = await run_SQL_query_and_get_result(dataQuery, cursor, limitOffset[0], limitOffset[1])
             else:
-                tableData = await run_SQLquery_and_get_result(dataQuery, cursor)
+                tableData = await run_SQL_query_and_get_result(dataQuery, cursor)
     
         cols = tuple(await get_cursor_description(cursor))
         tableData.insert(0, cols)
@@ -136,10 +160,10 @@ async def build_table_data(dbType: str, tableName: str, cursor, additionalParams
         tableName: (tableData, tableSQL)
     }
 
-async def build_SQLview_data(dbType: str, viewName: str, cursor, additionalParams: dict = None) -> 'dict[str, list]':
+async def build_SQL_view_data(dbType: str, viewName: str, cursor, additionalParams: dict = None) -> 'dict[str, list]':
     try:
         viewQuery = SQLViewQueries[dbType].format(viewName)
-        viewData = await run_SQLquery_and_get_result(viewQuery, cursor)
+        viewData = await run_SQL_query_and_get_result(viewQuery, cursor)
     
     except (ExecutionError, ConnectionError) as e:
         if isinstance(e, ConnectionError):
@@ -148,6 +172,24 @@ async def build_SQLview_data(dbType: str, viewName: str, cursor, additionalParam
 
     return {
         viewName: viewData    
+        }
+
+async def build_SQL_index_data(dbType: str, indexName: str, tableName: str, cursor, additionalParams: dict = None) -> 'dict[str, list]':
+    try:
+        if dbType != "mysql":
+            indexData = SQLIndexQueries[dbType].format(indexName)
+        else:
+            indexQuery = SQLIndexQueries[dbType].format(tableName)
+            indexData = await run_SQL_query_and_get_result(indexQuery, cursor)
+            indexData = match(rf"KEY: `{indexName}` (`.+`)", indexData)
+    
+    except (ExecutionError, ConnectionError) as e:
+        if isinstance(e, ConnectionError):
+            e.args = (e.args[0].format(**additionalParams),)
+        raise
+
+    return {
+        {"name": indexName, "fromTable": tableName}: indexData    
         }
 
 # NoSQL
@@ -164,7 +206,7 @@ async def read_collections(additionalParams: dict = None, collectionLimitSkip: '
             data = await gather(*tasks)
             return data
 
-async def run_mongoquery_and_get_result(queryElems: list, collectionObject, *params):
+async def run_mongo_query_and_get_result(queryElems: list, collectionObject, *params):
     queryObj = f"collectionObject" + "".join(mongodbAvailableQueryElems[elem] for elem in queryElems).format(*params)
     return eval(queryObj)
 
@@ -174,13 +216,13 @@ async def build_collection_data(collectionName: str, client: pymongo.MongoClient
     if limitSkip:
         if limitSkip[1] is None:
             limitSkip = (limitSkip[0], 0)
-        collectionData = await run_mongoquery_and_get_result(["find", "limit", "skip"], collection, limitSkip[0], limitSkip[1])
+        collectionData = await run_mongo_query_and_get_result(["find", "limit", "skip"], collection, limitSkip[0], limitSkip[1])
     else:
-        collectionData = await run_mongoquery_and_get_result(["find"], collection)
+        collectionData = await run_mongo_query_and_get_result(["find"], collection)
     
     return {
         collectionName: list(collectionData)
     }
 
 if __name__ == "__main__":
-    run(read_tables("postgresql", "/home/brunengo/Escritorio/Proshecto/northwind.db", additionalParams= {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, tablesLimitOffset= {"customers": (20, None)}))
+    run(read_views("postgresql", "/home/brunengo/Escritorio/Proshecto/northwind.db", additionalParams= {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, viewsName= ["test"]))
