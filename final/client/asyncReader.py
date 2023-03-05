@@ -1,7 +1,7 @@
 import pyodbc, pymongo
 from subprocess import Popen, PIPE
 from asyncio import create_task, gather, run
-from re import match
+from re import findall
 
 from queries import SQLDbStructureQueries, SQLDataQueries, SQLViewQueries, SQLIndexQueries, mongodbAvailableQueryElems
 from connectionData import drivers, connStrs
@@ -51,7 +51,7 @@ async def read_tables(dbType: str, dbPath: str = None, additionalParams: dict = 
         with await get_connection(dbType, dbPath, additionalParams) as connection:
             cursor = await get_cursor(connection)
             tasks = [
-                create_task(build_table_data(dbType, tableName, cursor, additionalParams, LimitOffset))
+                create_task(build_SQL_table_data(dbType, tableName, cursor, additionalParams, LimitOffset))
                 for tableName, LimitOffset in tablesLimitOffset.items()
                 ]
             data = await gather(*tasks)
@@ -84,7 +84,7 @@ async def read_views(dbType: str, dbPath: str = None, additionalParams: dict = N
     except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
         raise
 
-async def read_index(dbType: str, dbPath: str = None, additionalParams: dict = None, indexesTables: 'dict[str, str]' = None):
+async def read_indexes(dbType: str, dbPath: str = None, additionalParams: dict = None, indexesTables: 'dict[str, str]' = None):
     try:
         with await get_connection(dbType, dbPath, additionalParams) as connection:
             cursor = await get_cursor(connection)
@@ -101,7 +101,7 @@ async def read_index(dbType: str, dbPath: str = None, additionalParams: dict = N
                     ]'''
             data = await gather(*tasks)
             cursor.close()
-            return data
+            print(data)
     
     except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
         raise
@@ -130,7 +130,7 @@ async def run_SQL_query_and_get_result(query: str, cursor, *params) -> list:
     
     return cursor.fetchall()
 
-async def build_table_data(dbType: str, tableName: str, cursor, additionalParams: dict = None, limitOffset: 'tuple[int]' = None) -> 'dict[str, tuple[list]]':
+async def build_SQL_table_data(dbType: str, tableName: str, cursor, additionalParams: dict = None, limitOffset: 'tuple[int]' = None) -> 'dict[str, tuple[list]]':
     try:
         if dbType != "postgresql":
             structQuery = SQLDbStructureQueries[dbType].format(tableName)
@@ -171,25 +171,26 @@ async def build_SQL_view_data(dbType: str, viewName: str, cursor, additionalPara
         raise
 
     return {
-        viewName: viewData    
+        viewName: viewData[0]  
         }
 
 async def build_SQL_index_data(dbType: str, indexName: str, tableName: str, cursor, additionalParams: dict = None) -> 'dict[str, list]':
     try:
         if dbType != "mysql":
-            indexData = SQLIndexQueries[dbType].format(indexName)
+            indexQuery = SQLIndexQueries[dbType].format(indexName)
+            indexData = await run_SQL_query_and_get_result(indexQuery, cursor)
         else:
             indexQuery = SQLIndexQueries[dbType].format(tableName)
             indexData = await run_SQL_query_and_get_result(indexQuery, cursor)
-            indexData = match(rf"KEY: `{indexName}` (`.+`)", indexData)
+            indexData = findall(r"KEY `{0}` \(`.*`\)".format(indexName), indexData[0][1])
     
     except (ExecutionError, ConnectionError) as e:
         if isinstance(e, ConnectionError):
             e.args = (e.args[0].format(**additionalParams),)
         raise
-
+    
     return {
-        {"name": indexName, "fromTable": tableName}: indexData    
+        f"{indexName}-{tableName}": indexData[0]
         }
 
 # NoSQL
@@ -225,4 +226,4 @@ async def build_collection_data(collectionName: str, client: pymongo.MongoClient
     }
 
 if __name__ == "__main__":
-    run(read_views("postgresql", "/home/brunengo/Escritorio/Proshecto/northwind.db", additionalParams= {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, viewsName= ["test"]))
+    run(read_indexes("postgresql", "/home/brunengo/Escritorio/Proshecto/northwind.db", additionalParams= {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, indexesTables= {"test_idx": "actor"}))

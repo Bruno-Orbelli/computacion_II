@@ -1,23 +1,24 @@
 SQLDbStructureQueries = {
-    "sqlite3": r"SELECT sql FROM sqlite_master WHERE type='table' AND name='{0}'",
-    "mysql": r"SHOW CREATE TABLE `{0}`",
+    "sqlite3": "SELECT sql FROM sqlite_master WHERE type='table' AND name='{0}'",
+    "mysql": "SHOW CREATE TABLE `{0}`",
 }
 
 SQLDataQueries = {
-    "sqlite3": r"SELECT * FROM [{0}]",
-    "mysql": r"SELECT * FROM `{0}`",
-    "postgresql": r'SELECT * FROM "{0}"',
+    "sqlite3": "SELECT * FROM [{0}]",
+    "mysql": "SELECT * FROM `{0}`",
+    "postgresql": 'SELECT * FROM "{0}"',
 }
 
 SQLViewQueries = {
-    "sqlite3": r"SELECT sql FROM sqlite_master WHERE type='view' AND name='{0}'",
-    "mysql": r"SHOW CREATE VIEW `{0}`",
-    "postgresql": r"SELECT pg_get_viewdef('{0}', true)"
+    "sqlite3": "SELECT sql FROM sqlite_master WHERE type='view' AND name='{0}'",
+    "mysql": "SHOW CREATE VIEW `{0}`",
+    "postgresql": "SELECT pg_get_viewdef('{0}', true)"
 }
 
 SQLIndexQueries = {
-    "sqlite3": r"SELECT sql FROM sqlite_master WHERE type='index' AND name='{0}'",
-    "mysql": r"SHOW CREATE TABLE `{0}`",
+    "sqlite3": "SELECT sql FROM sqlite_master WHERE type='index' AND name='{0}'",
+    "mysql": "SHOW CREATE TABLE `{0}`",
+    "postgresql": "SELECT indexdef FROM pg_indexes WHERE indexname='{0}'"
 }
 
 mongodbAvailableQueryElems = {
