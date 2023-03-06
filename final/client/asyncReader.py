@@ -46,7 +46,7 @@ async def get_cursor_description(cursor):
     except pyodbc.Error:
         raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
 
-async def read_tables(dbType: str, dbPath: str = None, additionalParams: dict = None, tablesLimitOffset: 'dict[str, tuple[int]]' = None) -> dict:
+async def read_SQL_tables(dbType: str, dbPath: str = None, additionalParams: dict = None, tablesLimitOffset: 'dict[str, tuple[int]]' = None) -> dict:
     try:
         with await get_connection(dbType, dbPath, additionalParams) as connection:
             cursor = await get_cursor(connection)
@@ -61,22 +61,14 @@ async def read_tables(dbType: str, dbPath: str = None, additionalParams: dict = 
     except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
         raise
 
-async def read_views(dbType: str, dbPath: str = None, additionalParams: dict = None, viewsName: list = None):
-    # Investigar creación de views en Mongo
+async def read_SQL_views(dbType: str, dbPath: str = None, additionalParams: dict = None, viewNames: list = None):
     try:
         with await get_connection(dbType, dbPath, additionalParams) as connection:
             cursor = await get_cursor(connection)
-            if dbType != "mongodb":
-                tasks = [
-                    create_task(build_SQL_view_data(dbType, viewName, cursor, additionalParams))
-                    for viewName in viewsName
-                    ]
-            else:
-                pass
-                '''tasks = [
-                    create_task(build_mongo_view_data(dbType, viewName, cursor, additionalParams))
-                    for viewName in viewsName
-                    ]'''
+            tasks = [
+                create_task(build_SQL_view_data(dbType, viewName, cursor, additionalParams))
+                for viewName in viewNames
+                ]
             data = await gather(*tasks)
             cursor.close()
             return data
@@ -84,21 +76,14 @@ async def read_views(dbType: str, dbPath: str = None, additionalParams: dict = N
     except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
         raise
 
-async def read_indexes(dbType: str, dbPath: str = None, additionalParams: dict = None, indexesTables: 'dict[str, str]' = None):
+async def read_SQL_indexes(dbType: str, dbPath: str = None, additionalParams: dict = None, indexesTables: 'dict[str, str]' = None):
     try:
         with await get_connection(dbType, dbPath, additionalParams) as connection:
             cursor = await get_cursor(connection)
-            if dbType != "mongodb":
-                tasks = [
-                    create_task(build_SQL_index_data(dbType, indexName, tableName, cursor, additionalParams))
-                    for indexName, tableName in indexesTables.items()
-                    ]
-            else:
-                pass
-                '''tasks = [
-                    create_task(build_mongo_index_data(dbType, indexName, cursor, additionalParams))
-                    for viewName in viewsName
-                    ]'''
+            tasks = [
+                create_task(build_SQL_index_data(dbType, indexName, tableName, cursor, additionalParams))
+                for indexName, tableName in indexesTables.items()
+                ]
             data = await gather(*tasks)
             cursor.close()
             print(data)
@@ -124,7 +109,7 @@ async def run_SQL_query_and_get_result(query: str, cursor, *params) -> list:
     
     except (pyodbc.ProgrammingError, pyodbc.Error) as e:
         if isinstance(e, pyodbc.ProgrammingError):
-            raise ExecutionError("Failed to execute query; check for any missing/incorrect arguments (table name, parameters, ...).")
+            raise ExecutionError("Failed to execute query; check for any missing/incorrect arguments (table/view/index name, parameters, ...).")
         else:
             raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
     
@@ -194,30 +179,60 @@ async def build_SQL_index_data(dbType: str, indexName: str, tableName: str, curs
         }
 
 # NoSQL
+# Escribir permisos necesarios para MongoDB
 
 async def get_mongo_client(additionalParams: dict = None) -> pymongo.MongoClient:
-    return pymongo.MongoClient(connStrs["mongodb"].format(**additionalParams))
+    try:
+        client = pymongo.MongoClient(connStrs["mongodb"].format(**additionalParams))
+    
+    except (KeyError, pymongo.errors.ServerSelectionTimeoutError) as e:
+        if isinstance(e, KeyError):
+            raise ArgumentError(f"Missing required arguments for establishing 'mongodb' connection.")
+        else:
+            raise ConnectionError(
+                "Failed to establish connection with {host}:{port} (database `{dbName}`).\nEnsure: \n - server is running and accepting TCP/IP connections at that address. \n - the correct database type has been specified. \n - other requiered arguments (username, password, ...) are not incorrect.".format(**additionalParams)
+            )
+    
+    return client
 
-async def read_collections(additionalParams: dict = None, collectionLimitSkip: 'dict[str, tuple[int]]' = None) -> dict:
-        with await get_mongo_client(additionalParams) as client:
-            tasks = [
-                create_task(build_collection_data(collectionName, client, additionalParams, LimitSkip))
-                for collectionName, LimitSkip in collectionLimitSkip.items()
-                ]
-            data = await gather(*tasks)
-            return data
+async def read_mongo_collections(additionalParams: dict = None, collectionLimitSkip: 'dict[str, tuple[int]]' = None) -> dict:
+    with await get_mongo_client(additionalParams) as client:
+        tasks = [
+            create_task(build_mongo_collection_data(collectionName, client, additionalParams, LimitSkip))
+            for collectionName, LimitSkip in collectionLimitSkip.items()
+            ]
+        data = await gather(*tasks)
+        return data
 
-async def run_mongo_query_and_get_result(queryElems: list, collectionObject, *params):
-    queryObj = f"collectionObject" + "".join(mongodbAvailableQueryElems[elem] for elem in queryElems).format(*params)
+async def read_mongo_views(additionalParams: dict = None, viewNames: list = None):
+    with await get_mongo_client(additionalParams) as client:
+        tasks = [
+            create_task(build_mongo_view_data(viewName, client, additionalParams))
+            for viewName in viewNames
+            ]
+        data = await gather(*tasks)
+        return data
+
+async def read_mongo_indexes(additionalParams: dict = None, indexesCollection: 'dict[str, str]' = None):
+    with await get_mongo_client(additionalParams) as client:
+        tasks = [
+            create_task(build_mongo_index_data(indexName, collectionName, client, additionalParams))
+            for indexName, collectionName in indexesCollection.items()
+            ]
+        data = await gather(*tasks)
+        return data
+
+async def run_mongo_query_and_get_result(queryElems: list, accesibleObject, *params):
+    queryObj = "accesibleObject" + "".join(mongodbAvailableQueryElems[elem] for elem in queryElems).format(*params)
     return eval(queryObj)
 
-async def build_collection_data(collectionName: str, client: pymongo.MongoClient, additionalParams: dict = None, limitSkip: 'tuple[int]' = None) -> 'dict[str, list]':
+async def build_mongo_collection_data(collectionName: str, client: pymongo.MongoClient, additionalParams: dict = None, limitSkip: 'tuple[int]' = None) -> 'dict[str, list]':
     collection = client[additionalParams['dbName']][collectionName]
 
     if limitSkip:
         if limitSkip[1] is None:
             limitSkip = (limitSkip[0], 0)
-        collectionData = await run_mongo_query_and_get_result(["find", "limit", "skip"], collection, limitSkip[0], limitSkip[1])
+        collectionData = await run_mongo_query_and_get_result(["find", "limit", "skip"], collection, "", limitSkip[0], limitSkip[1])
     else:
         collectionData = await run_mongo_query_and_get_result(["find"], collection)
     
@@ -225,5 +240,21 @@ async def build_collection_data(collectionName: str, client: pymongo.MongoClient
         collectionName: list(collectionData)
     }
 
+async def build_mongo_view_data(viewName: str, client: pymongo.MongoClient, additionalParams: dict = None) -> 'dict[str, dict]':
+    views = client[additionalParams['dbName']]['system.views']
+    viewData = await run_mongo_query_and_get_result(["find"], views, {"_id": f"{additionalParams['dbName']}.{viewName}"})
+    
+    return {
+        viewName: list(viewData)[0]
+    }
+
+async def build_mongo_index_data(indexName: str, collectionName: str, client: pymongo.MongoClient, additionalParams: dict = None) -> 'dict[str, dict]':
+    collection = client[additionalParams['dbName']][collectionName]
+    indexData = await run_mongo_query_and_get_result(["getIndexes"], collection)
+    
+    return {
+        indexName: indexData[indexName]
+    }
+
 if __name__ == "__main__":
-    run(read_indexes("postgresql", "/home/brunengo/Escritorio/Proshecto/northwind.db", additionalParams= {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, indexesTables= {"test_idx": "actor"}))
+    run(read_mongo_indexes(additionalParams= {"user": "dbdummy", "password": "mongo", "host": "localhost", "dbName": "books", "port": 28000}, indexesCollection= {"pageCount_1": "books"}))
