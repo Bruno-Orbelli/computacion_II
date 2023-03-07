@@ -23,7 +23,7 @@ SQLIndexQueries = {
 
 mongodbAvailableQueryElems = {
     "find": ".find({0})",
-    "limit": ".limit({0})",
-    "skip": ".skip({0})",
+    "limit": ".limit({1})",
+    "skip": ".skip({2})",
     "getIndexes": ".index_information()"
 }

@@ -1,3 +1,4 @@
+from time import sleep
 import pyodbc, pymongo
 from subprocess import Popen, PIPE
 from asyncio import Future, create_task, gather, run
@@ -149,7 +150,10 @@ async def build_sql_view_data(dbType: str, viewName: str, cursor, connectionPara
         if isinstance(e, ConnectionError):
             e.args = (e.args[0].format(**connectionParams),)
         raise e
-
+  
+    if viewData[0][0] is None:
+        raise ExecutionError(f"Unexisting view `{viewName}` in '{connectionParams['dbName']}' database. Check for any misspellings.")
+    
     return {
         viewName: viewData[0]  
         }
@@ -180,13 +184,15 @@ async def get_mongo_client(connectionParams: dict) -> pymongo.MongoClient:
     try:
         client = pymongo.MongoClient(connStrs["mongodb"].format(**connectionParams))
     
-    except (KeyError, pymongo.errors.ServerSelectionTimeoutError) as e:
+    except (KeyError, pymongo.errors.ServerSelectionTimeoutError, pymongo.errors.OperationFailure) as e:
         if isinstance(e, KeyError):
             raise ArgumentError(f"Missing required arguments for establishing 'mongodb' connection.")
-        else:
+        elif isinstance(e, pymongo.errors.ServerSelectionTimeoutError):
             raise ConnectionError(
-                "Failed to establish connection with {host}:{port} (database `{dbName}`).\nEnsure: \n - server is running and accepting TCP/IP connections at that address. \n - the correct database type has been specified. \n - other requiered arguments (username, password, ...) are not incorrect.".format(**connectionParams)
+                "Failed to establish connection with {host}:{port} (database `{dbName}`).\nEnsure: \n - server is running and accepting TCP/IP connections at that address. \n - the correct database type has been specified. \n - other requiered arguments are not incorrect.".format(**connectionParams)
             )
+        else:
+            raise ConnectionError("Could not authenticate: wrong credentials. Check for any misspellings in your username or password.")
     
     return client
 
@@ -205,8 +211,8 @@ async def mongo_connect_and_read(connectionParams: dict, readParams: 'tuple[str,
 
 async def create_mongo_collection_tasks(connectionParams: dict, client: pymongo.MongoClient, collectionLimitSkip: 'dict[str, tuple[int]]' = None) -> list:
     tasks = [
-        create_task(build_mongo_collection_data(collectionName, client, connectionParams, LimitSkip))
-        for collectionName, LimitSkip in collectionLimitSkip.items()
+        create_task(build_mongo_collection_data(collectionName, client, connectionParams, limitSkip))
+        for collectionName, limitSkip in collectionLimitSkip.items()
         ]
     return tasks
 
@@ -225,44 +231,79 @@ async def create_mongo_index_tasks(connectionParams: dict, client: pymongo.Mongo
     return tasks
 
 async def run_mongo_query_and_get_result(queryElems: list, accesibleObject, *params):
-    queryObj = "accesibleObject" + "".join(mongodbAvailableQueryElems[elem] for elem in queryElems).format(*params)
-    return eval(queryObj)
+    try:
+        queryObj = "accesibleObject" + "".join(mongodbAvailableQueryElems[elem] for elem in queryElems).format(*params)
+        return eval(queryObj)
+       
+    except (pymongo.errors.ServerSelectionTimeoutError,) as e:
+        raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) could not be established or has been lost.\nEnsure: \n - server is running and accepting TCP/IP connections at that address. \n - the correct database type has been specified. \n - other requiered arguments (username, password, ...) are not incorrect.")
 
 async def build_mongo_collection_data(collectionName: str, client: pymongo.MongoClient, connectionParams: dict = None, limitSkip: 'tuple[int]' = None) -> 'dict[str, list]':
-    collection = client[connectionParams['dbName']][collectionName]
+    list_of_collections = client[connectionParams['dbName']].list_collection_names()
 
-    if limitSkip:
-        if limitSkip[1] is None:
-            limitSkip = (limitSkip[0], 0)
-        collectionData = await run_mongo_query_and_get_result(["find", "limit", "skip"], collection, "", limitSkip[0], limitSkip[1])
+    if not (collectionName in list_of_collections):
+        raise ExecutionError(f"Unexisting collection `{collectionName}` in '{connectionParams['dbName']}' database. Check for any misspellings.")
     
-    else:
-        collectionData = await run_mongo_query_and_get_result(["find"], collection)
+    try:
+        collection = client[connectionParams['dbName']][collectionName]
+        
+        if limitSkip:
+            if limitSkip[1] is None:
+                limitSkip = (limitSkip[0], 0)
+            collectionData = await run_mongo_query_and_get_result(["find", "limit", "skip"], collection, "", limitSkip[0], limitSkip[1])
+        
+        else:
+            collectionData = await run_mongo_query_and_get_result(["find"], collection, "")
+    
+    except ConnectionError as e:
+        e.args = (e.args[0].format(**connectionParams),)
+        raise e
     
     return {
         collectionName: list(collectionData)
     }
 
 async def build_mongo_view_data(viewName: str, client: pymongo.MongoClient, connectionParams: dict = None) -> 'dict[str, dict]':
-    views = client[connectionParams['dbName']]['system.views']
-    viewData = await run_mongo_query_and_get_result(["find"], views, {"_id": f"{connectionParams['dbName']}.{viewName}"})
+    try:
+        views = client[connectionParams['dbName']]['system.views']
+        viewData = await run_mongo_query_and_get_result(["find"], views, {"_id": f"{connectionParams['dbName']}.{viewName}"})
+    
+    except ConnectionError as e:
+        e.args = (e.args[0].format(**connectionParams),)
+        raise e
+
+    if not list(viewData):
+        raise ExecutionError(f"Unexisting view `{viewName}` in '{connectionParams['dbName']}' database. Check for any misspellings.")
     
     return {
         viewName: list(viewData)[0]
     }
 
 async def build_mongo_index_data(indexName: str, collectionName: str, client: pymongo.MongoClient, connectionParams: dict = None) -> 'dict[str, dict]':
-    collection = client[connectionParams['dbName']][collectionName]
-    indexData = await run_mongo_query_and_get_result(["getIndexes"], collection)
+    try:
+        collection = client[connectionParams['dbName']][collectionName]
+        indexData = await run_mongo_query_and_get_result(["getIndexes"], collection)
+    
+    except ConnectionError as e:
+        e.args = (e.args[0].format(**connectionParams),)
+        raise e
+    
+    if not list(indexData):
+        raise ExecutionError(f"Unexisting index `{indexName}` in collection `{collectionName}` from '{connectionParams['dbName']}' database. Check for any misspellings.")
     
     return {
         indexName: indexData[indexName]
     }
 
 if __name__ == "__main__":
-    print(run(sql_connect_and_read(
+    '''print(run(sql_connect_and_read(
         dbType= "postgresql", 
         dbPath= "/home/brunengo/Escritorio/Proshecto/northwind.db", 
         connectionParams= {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, 
-        readParams= ("index", {"test_idx": "actor"})
+        readParams= ("view", ["actor"])
+        )))'''
+    
+    print(run(mongo_connect_and_read(
+        connectionParams= {"user": "dbdummy", "password": "mongo", "host": "localhost", "dbName": "admin", "port": 27018}, 
+        readParams= ("index", {"nonexistant": "books"})
         )))
