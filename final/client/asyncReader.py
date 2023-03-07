@@ -12,13 +12,16 @@ from exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, 
 async def get_sql_connection(dbType: str, dbPath: str = None, connectionParams: dict = None) -> pyodbc.Connection:
     if dbType not in connStrs:
         raise UnsupportedDBTypeError(f"Unsupported or unexisting database type '{dbType}'.")
+    
     else:
         connectionStr = connStrs[dbType]
+        
         if dbType in ("mysql", "postgresql"):
             try:
                 connectionStr = connectionStr.format(**connectionParams)
             except KeyError:
                 raise ArgumentError(f"Missing required arguments for establishing '{dbType}' connection.")
+        
         elif dbType == "sqlite3":
                 connectionStr = connectionStr.format(dbPath)
                 process = Popen(["cat", dbPath], stdout= PIPE, stderr= PIPE)
@@ -29,6 +32,7 @@ async def get_sql_connection(dbType: str, dbPath: str = None, connectionParams: 
     
     try:
         return pyodbc.connect(connectionStr, readonly= True, autocommit= False)
+    
     except (pyodbc.OperationalError, pyodbc.Error):
         raise ConnectionError(
             "Failed to establish connection with {host}:{port} (database `{dbName}`).\nEnsure: \n - server is running and accepting TCP/IP connections at that address. \n - the correct database type has been specified. \n - other requiered arguments (username, password, ...) are not incorrect.".format(**connectionParams)
@@ -47,6 +51,9 @@ async def get_cursor_description(cursor) -> list:
         raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
 
 async def sql_connect_and_read(dbType: str, dbPath: str = None, connectionParams: dict = None, readParams: 'tuple[str, dict | list]' = None) -> 'Future[list]':
+    if dbType == "sqlite3":
+        connectionParams = {"dbName": dbPath.split("/")[-1][:-3:]}
+    
     taskFunctions = {
         "table": create_sql_table_tasks,
         "view": create_sql_view_tasks,
@@ -103,7 +110,7 @@ async def run_sql_query_and_get_result(query: str, cursor, *params) -> list:
             cursor.execute(query)
     
     except (pyodbc.ProgrammingError, pyodbc.Error) as e:
-        if isinstance(e, pyodbc.ProgrammingError):
+        if isinstance(e, pyodbc.ProgrammingError) or e.args[0] == 'HY000':
             raise ExecutionError("Failed to execute query; check for any missing/incorrect arguments (table/view/index name, parameters, ...).")
         else:
             raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
@@ -111,6 +118,8 @@ async def run_sql_query_and_get_result(query: str, cursor, *params) -> list:
     return cursor.fetchall()
 
 async def build_sql_table_data(dbType: str, tableName: str, cursor, connectionParams: dict = None, limitOffset: 'tuple[int, int]' = None) -> 'dict[str, tuple[list]]':
+    check_for_sanitized_sql_input(dbType, tableName)
+    
     try:
         if dbType != "postgresql":
             structQuery = SQLDbStructureQueries[dbType].format(tableName)
@@ -141,6 +150,8 @@ async def build_sql_table_data(dbType: str, tableName: str, cursor, connectionPa
     }
 
 async def build_sql_view_data(dbType: str, viewName: str, cursor, connectionParams: dict = None) -> 'dict[str, list]':
+    check_for_sanitized_sql_input(dbType, viewName)
+    
     try:
         viewQuery = SQLViewQueries[dbType].format(viewName)
         viewData = await run_sql_query_and_get_result(viewQuery, cursor)
@@ -150,7 +161,11 @@ async def build_sql_view_data(dbType: str, viewName: str, cursor, connectionPara
             e.args = (e.args[0].format(**connectionParams),)
         raise e
   
-    if viewData[0][0] is None:
+    try:
+        if viewData[0][0] is None:
+            raise ExecutionError(f"Unexisting view `{viewName}` in '{connectionParams['dbName']}' database. Check for any misspellings.")
+    
+    except IndexError:
         raise ExecutionError(f"Unexisting view `{viewName}` in '{connectionParams['dbName']}' database. Check for any misspellings.")
     
     return {
@@ -158,6 +173,9 @@ async def build_sql_view_data(dbType: str, viewName: str, cursor, connectionPara
         }
 
 async def build_sql_index_data(dbType: str, indexName: str, tableName: str, cursor, connectionParams: dict = None) -> 'dict[str, list]':
+    for name in (indexName, tableName):
+        check_for_sanitized_sql_input(dbType, name) 
+    
     try:
         if dbType != "mysql":
             indexQuery = SQLIndexQueries[dbType].format(indexName)
@@ -175,6 +193,21 @@ async def build_sql_index_data(dbType: str, indexName: str, tableName: str, curs
     return {
         f"{indexName}-{tableName}": indexData[0]
         }
+
+def check_for_sanitized_sql_input(dbType: str, queryInput: str):
+    forbbidenChars = {
+        "sqlite3": ["[", "]", "'"],
+        "mysql": ["`"],
+        "postgresql": ["\"", "'"]
+    }
+    
+    for char in forbbidenChars[dbType]:
+        splittedInput = queryInput.split(char)
+    
+        if len(splittedInput) > 1:
+            raise ArgumentError(
+                "Potencially malicious query arguments. Query input containing quotes, backticks or squared brackets is always rejected depending on database type, as to avoid SQL injections."
+            )
 
 # NoSQL
 # Escribir permisos necesarios para MongoDB
@@ -295,14 +328,14 @@ async def build_mongo_index_data(indexName: str, collectionName: str, client: py
     }
 
 if __name__ == "__main__":
-    '''print(run(sql_connect_and_read(
-        dbType= "postgresql", 
+    print(run(sql_connect_and_read(
+        dbType= "sqlite3", 
         dbPath= "/home/brunengo/Escritorio/Proshecto/northwind.db", 
         connectionParams= {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, 
-        readParams= ("view", ["actor"])
-        )))'''
+        readParams= ("table", {"Customers": None})
+        )))
     
-    print(run(mongo_connect_and_read(
+    '''print(run(mongo_connect_and_read(
         connectionParams= {"user": "dbdummy", "password": "mongo", "host": "localhost", "dbName": "admin", "port": 27018}, 
         readParams= ("index", {"nonexistant": "books"})
-        )))
+        )))'''
