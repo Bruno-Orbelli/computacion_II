@@ -1,5 +1,4 @@
-from socket import socket, AF_INET, AF_INET6, SOCK_STREAM, gaierror
-from asyncio import Queue, create_task, run, gather, open_connection, StreamReader, StreamWriter, sleep
+from asyncio import Queue, create_task, run, gather, open_connection, StreamReader, StreamWriter
 from pickle import dumps, loads
 from sys import getsizeof
 from os import getenv
@@ -8,7 +7,7 @@ from dotenv import load_dotenv
 toSendQueue, toReceiveList = Queue(), []
 requestID = 0
 
-async def client_data_loop():
+async def data_sender_and_receiver():
     load_dotenv()
     
     SERVER_PORT = int(getenv("SERVER_PORT"))
@@ -16,23 +15,13 @@ async def client_data_loop():
     
     # ipv4socket, ipv6socket = socket(AF_INET, SOCK_STREAM), socket(AF_INET6, SOCK_STREAM)
     
-    while True:
-        if not toSendQueue.empty():
-            reader, writer = await open_connection(SERVER_IP_ADDRESS, SERVER_PORT)
-            print(await establish_connection_and_execute(reader, writer, SERVER_IP_ADDRESS, SERVER_PORT))
+    if not toSendQueue.empty():
+        return await establish_connection_and_execute(SERVER_IP_ADDRESS, SERVER_PORT)
 
 # Agregar opción para usar protocolo UDP? Probar performance de los dos protocolos?
-async def establish_connection_and_execute(reader: StreamReader, writer: StreamWriter, ipAddress: str, port: int):   
-    '''try:
-        ipv4socket.connect((ipAddress, port))
-        sock = ipv4socket
+async def establish_connection_and_execute(ipAddress: str, port: int):   
     
-    # Añadir excepción cuando la dirección o el puerto son incorrectos.
-
-    except gaierror:
-        ipv6socket.connect((ipAddress, port))
-        ipv6socket
-        sock = ipv6socket'''
+    reader, writer = await open_connection(ipAddress, port)
     
     # En el servidor, añadir algo que indique el final de una respuesta de conversión.
     
@@ -40,7 +29,8 @@ async def establish_connection_and_execute(reader: StreamReader, writer: StreamW
     await gather(*sendTasks)
 
     results = await receive_data(reader)
-
+    writer.close()
+    await writer.wait_closed()
     return results
 
 async def create_conversion_request_tasks(writer: StreamWriter):
@@ -55,14 +45,6 @@ async def create_conversion_request_tasks(writer: StreamWriter):
     ]
     
     return tasks
-
-'''async def create_conversion_receive_tasks(reader: StreamReader):
-    tasks = [
-        create_task(receive_data(reader))
-        for _id in toReceiveList
-    ]
-
-    return tasks'''
 
 async def add_conversion_request(originDbType: str, convertTo: str, data):
     global requestID
@@ -81,41 +63,38 @@ async def add_conversion_request(originDbType: str, convertTo: str, data):
 async def send_data(writer: StreamWriter, data):
     toSend = dumps(data)
     print(toSend)
+    
     writer.write(toSend)
     await writer.drain()
+    
     writer.write(b'\n')
     await writer.drain()
 
 async def receive_data(reader: StreamReader):
+    rawResponse, responses = [], []
+    
     while len(toReceiveList):
-        toReceiveRaw = b''
                     
         while True:              
             packet = await reader.read(1024)
-            print(packet)
-            toReceiveRaw += packet
+            rawResponse.append(packet)
 
             if getsizeof(packet) <= 1024:
                 break
         
-        toReceive = loads(toReceiveRaw)
+        unpickledResponse = loads(b''.join(pack for pack in rawResponse))
+        responses.append(unpickledResponse)
         toReceiveList.pop()
-        print(len(toReceiveList))
         # toReceiveList.remove(toReceive["id"])    
     
-    print(toReceive)
-    return toReceive
+    return responses
 
 async def main(): # Test main function
     await add_conversion_request("", "", "ps")
     await add_conversion_request("", "", "ps")
     await add_conversion_request("", "", "ps")
     await add_conversion_request("", "", "ps")
-    await add_conversion_request("", "", "ps")
-    await add_conversion_request("", "", "ps")
-    await add_conversion_request("", "", "ps")
-    await add_conversion_request("", "", "ps")
-    await client_data_loop()
+    await data_sender_and_receiver()
 
 if __name__ == "__main__":
     run(main())
