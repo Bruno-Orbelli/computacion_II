@@ -1,4 +1,3 @@
-from time import sleep
 import pyodbc, pymongo
 from subprocess import Popen, PIPE
 from asyncio import Future, create_task, gather, run
