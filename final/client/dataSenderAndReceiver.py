@@ -4,98 +4,101 @@ from sys import getsizeof
 from os import getenv
 from dotenv import load_dotenv
 
-toSendQueue, toReceiveList = Queue(), []
-requestID = 0
+class ClientDataSenderAndReceiver():
 
-async def data_sender_and_receiver():
-    load_dotenv()
-    
-    SERVER_PORT = int(getenv("SERVER_PORT"))
-    SERVER_IP_ADDRESS = getenv("SERVER_IP_ADDRESS")
-    
-    # ipv4socket, ipv6socket = socket(AF_INET, SOCK_STREAM), socket(AF_INET6, SOCK_STREAM)
-    
-    if not toSendQueue.empty():
-        return await establish_connection_and_execute(SERVER_IP_ADDRESS, SERVER_PORT)
-
-# Agregar opción para usar protocolo UDP? Probar performance de los dos protocolos?
-async def establish_connection_and_execute(ipAddress: str, port: int):   
-    
-    reader, writer = await open_connection(ipAddress, port)
-    
-    # En el servidor, añadir algo que indique el final de una respuesta de conversión.
-    
-    sendTasks = await create_conversion_request_tasks(writer)
-    await gather(*sendTasks)
-
-    results = await receive_data(reader)
-    writer.close()
-    await writer.wait_closed()
-    return results
-
-async def create_conversion_request_tasks(writer: StreamWriter):
-    requests = []
-    
-    while not toSendQueue.empty():
-        requests.append(await toSendQueue.get())
-    
-    tasks = [
-        create_task(send_data(writer, request))
-        for request in requests
-    ]
-    
-    return tasks
-
-async def add_conversion_request(originDbType: str, convertTo: str, data):
-    global requestID
-    requestID += 1
-    '''convReques = {
-        "id": requestID,
-        "originDbType": originDbType,
-        "converTo": convertTo,
-        "data": data
-    }'''
-    # await toSendQueue.put({convReques})
-    await toSendQueue.put(data)
-    # await toReceiveList.append(requestID)
-    toReceiveList.append(1)
-
-async def send_data(writer: StreamWriter, data):
-    toSend = dumps(data)
-    print(toSend)
-    
-    writer.write(toSend)
-    await writer.drain()
-    
-    writer.write(b'\n')
-    await writer.drain()
-
-async def receive_data(reader: StreamReader):
-    rawResponse, responses = [], []
-    
-    while len(toReceiveList):
-                    
-        while True:              
-            packet = await reader.read(1024)
-            rawResponse.append(packet)
-
-            if getsizeof(packet) <= 1024:
-                break
+    def __init__(self) -> None:
+        load_dotenv()
         
-        unpickledResponse = loads(b''.join(pack for pack in rawResponse))
-        responses.append(unpickledResponse)
-        toReceiveList.pop()
-        # toReceiveList.remove(toReceive["id"])    
-    
-    return responses
+        self.serverIP = getenv("SERVER_IP_ADDRESS")
+        self.serverPort = int(getenv("SERVER_PORT"))
+        
+        self.requestID = 0
+        self.toSendQueue = Queue()
+        self.toReceiveList = []
 
-async def main(): # Test main function
-    await add_conversion_request("", "", "ps")
-    await add_conversion_request("", "", "ps")
-    await add_conversion_request("", "", "ps")
-    await add_conversion_request("", "", "ps")
-    await data_sender_and_receiver()
+        self.operate = True
+    
+    async def connect_and_run(self):       
+        reader, writer = await open_connection(self.serverIP, self.serverPort)
+        
+        while self.operate:
+            if not self.toSendQueue.empty():
+                return await self.exchange_data(reader, writer)
+        
+        writer.close()
+        await writer.wait_closed()
+
+    # Agregar opción para usar protocolo UDP? Probar performance de los dos protocolos?
+    async def exchange_data(self, reader: StreamReader, writer: StreamWriter):   
+        # En el servidor, añadir algo que indique el final de una respuesta de conversión.
+        infoSendingTasks = await self.create_conversion_request_tasks(writer)
+        await gather(*infoSendingTasks)
+
+        results = await self.receive_data(reader)
+        return results
+
+    async def create_conversion_request_tasks(self, writer: StreamWriter):
+        requests = []
+        
+        while not self.toSendQueue.empty():
+            requests.append(await self.toSendQueue.get())
+        
+        tasks = [
+            create_task(self.send_data(writer, request))
+            for request in requests
+        ]
+        
+        return tasks
+
+    async def add_conversion_request(self, originDbType: str, convertTo: str, data):
+        self.requestID += 1
+        
+        convReques = {
+            "id": self.requestID,
+            "originDbType": originDbType,
+            "converTo": convertTo,
+            "data": data
+        }
+        # await toSendQueue.put({convReques})
+        await self.toSendQueue.put(data)
+        # await toReceiveList.append(requestID)
+        self.toReceiveList.append(1)
+
+    async def send_data(self, writer: StreamWriter, data):
+        toSend = dumps(data)
+        writer.write(toSend)
+        await writer.drain()
+        
+        writer.write(b'\n')
+        await writer.drain()
+
+    async def receive_data(self, reader: StreamReader):
+        responses = []
+
+        while len(self.toReceiveList):
+            rawResponse = []
+            packet = b''
+
+            while getsizeof(packet) > 1024 or not packet:              
+                packet = await reader.read(1024)
+                rawResponse.append(packet)
+            
+            unpickledResponse = loads(b''.join(pack for pack in rawResponse))
+            responses.append(unpickledResponse)
+            self.toReceiveList.pop()
+            # toReceiveList.remove(toReceive["id"])    
+        return responses
+
+async def test_func():
+    senderAndReceiver = ClientDataSenderAndReceiver()    
+    tasks = [create_task(senderAndReceiver.connect_and_run())]
+    tasks.extend([
+        create_task(senderAndReceiver.add_conversion_request("", "", "ps"))
+        for _ in range(8)
+    ])
+    result = await gather(*tasks)
+    print(result[0])
 
 if __name__ == "__main__":
-    run(main())
+    run(test_func())
 
