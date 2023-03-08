@@ -9,3 +9,6 @@ class ExecutionError(Exception):
 
 class ArgumentError(Exception):
     pass
+
+class InitializationError(Exception):
+    pass
