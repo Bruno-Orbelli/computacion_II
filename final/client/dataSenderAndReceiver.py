@@ -1,4 +1,4 @@
-from asyncio import Queue, create_task, run, gather, open_connection, wait_for, TimeoutError, StreamReader, StreamWriter
+from asyncio import Queue, StreamReader, StreamWriter, Task, TimeoutError, create_task, run, gather, open_connection, wait_for
 from pickle import dumps, loads
 from sys import getsizeof
 from os import getenv
@@ -11,25 +11,28 @@ class ClientDataSenderAndReceiver():
     def __init__(self) -> None:
         load_dotenv()
         
-        self.serverIP = ("SERVER_IP_ADDRESS", getenv("SERVER_IP_ADRESS"))
-        self.serverPort = ("SERVER_PORT", getenv("SERVER_POT"))
+        self.serverIP = ("SERVER_IP_ADDRESS", getenv("SERVER_IP_ADDRESS"))
+        self.serverPort = ("SERVER_PORT", getenv("SERVER_PORT"))
         self.serverConnTimeout = ("SERVER_CONNECTION_TIMEOUT", getenv("SERVER_CONNECTION_TIMEOUT"))
+        self.serverResponseTimeout = ("SERVER_RESPONSE_TIMEOUT", getenv("SERVER_RESPONSE_TIMEOUT"))
 
-        if None in (self.serverIP[1], self.serverPort[1], self.serverConnTimeout[1]):
-            envVars = (self.serverIP, self.serverPort, self.serverConnTimeout)
+        if None in (self.serverIP[1], self.serverPort[1], self.serverConnTimeout[1], self.serverResponseTimeout[1]):
+            envVars = (self.serverIP, self.serverPort, self.serverConnTimeout, self.serverResponseTimeout)
             envVarsStr = ", ".join(envVar[0] for envVar in envVars if envVar[1] is None)
             raise InitializationError(
                 f"Could not read environment variable{'s' if tuple(enVar[1] for enVar in envVars).count(None) > 1 else ''} {envVarsStr}. Check for any modifications in '.env'."
                 )
         
-        self.serverPort = int(self.serverPort)
-        self.serverConnTimeout = float(self.serverConnTimeout)
+        self.serverIP = self.serverIP[1]
+        self.serverPort = int(self.serverPort[1])
+        self.serverConnTimeout = float(self.serverConnTimeout[1])
+        self.serverResponseTimeout = float(self.serverResponseTimeout[1])
         
         self.requestID = 0
         self.toSendQueue = Queue()
         self.toReceiveList = []
     
-    async def connect_and_run(self):       
+    async def connect_and_run(self) -> list:       
         try:
             reader, writer = await wait_for(open_connection(self.serverIP, self.serverPort), timeout= self.serverConnTimeout)
         
@@ -45,15 +48,21 @@ class ClientDataSenderAndReceiver():
                 await writer.wait_closed()
                 return result
 
-    async def exchange_data(self, reader: StreamReader, writer: StreamWriter):   
+    async def exchange_data(self, reader: StreamReader, writer: StreamWriter) -> list:   
         # En el servidor, añadir algo que indique el final de una respuesta de conversión (\n).
         infoSendingTasks = await self.create_conversion_request_tasks(writer)
-        await gather(*infoSendingTasks)
+        try:
+            await gather(*infoSendingTasks)
+        
+        except ConnectionResetError:
+            raise ConnectionError(
+                f"Connection with conversion server at '{self.serverIP}:{self.serverPort}' has been lost. Ensure server is still up and try again."
+                )
 
         results = await self.receive_data(reader)
         return results
 
-    async def create_conversion_request_tasks(self, writer: StreamWriter):
+    async def create_conversion_request_tasks(self, writer: StreamWriter) -> 'list[Task[None]]':
         requests = []
         
         while not self.toSendQueue.empty():
@@ -66,7 +75,7 @@ class ClientDataSenderAndReceiver():
         
         return tasks
 
-    async def add_conversion_request(self, originDbType: str, convertTo: str, data):
+    async def add_conversion_request(self, originDbType: str, convertTo: str, data) -> None:
         self.requestID += 1
         
         convReques = {
@@ -76,31 +85,40 @@ class ClientDataSenderAndReceiver():
             "data": data
         }
         
-        await self.toSendQueue.put(convReques)
+        await self.toSendQueue.put(convReques["data"])
         self.toReceiveList.append(self.requestID)
 
-    async def send_data(self, writer: StreamWriter, data):
+    async def send_data(self, writer: StreamWriter, data) -> None:
         toSend = dumps(data)
         writer.write(toSend)
         await writer.drain()
-        
+            
         writer.write(b'\n')
         await writer.drain()
+        
+        # Agregar una opción de retry?
 
-    async def receive_data(self, reader: StreamReader):
+    async def receive_data(self, reader: StreamReader) -> list:
         responses = []
 
         while len(self.toReceiveList):
             rawResponse = []
             packet = b''
 
-            while getsizeof(packet) > 1024 or not packet:              
-                packet = await reader.read(1024)
-                rawResponse.append(packet)
+            try:
+                while getsizeof(packet) > 1024 or not packet:              
+                    packet = await wait_for(reader.read(1024), self.serverResponseTimeout)
+                    rawResponse.append(packet)
+            
+            except TimeoutError:
+                raise ConnectionError(
+                    f"No response from conversion server at '{self.serverIP}:{self.serverPort}' after {self.serverResponseTimeout}s. Ensure server is still up and try again."
+                    ) 
             
             unpickledResponse = loads(b''.join(pack for pack in rawResponse))
             responses.append(unpickledResponse)
-            self.toReceiveList.remove(unpickledResponse["id"])    
+            self.toReceiveList.pop()
+            # self.toReceiveList.remove(unpickledResponse["id"])    
         
         return responses
 
