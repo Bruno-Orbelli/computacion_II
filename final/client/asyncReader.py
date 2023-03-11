@@ -3,7 +3,7 @@ from subprocess import Popen, PIPE
 from asyncio import Future, create_task, gather, run
 from re import findall
 
-from queries import SQLDbStructureQueries, SQLDataQueries, SQLViewQueries, SQLIndexQueries, mongodbAvailableQueryElems
+from queries import SQLDbStructureQueries, SQLObjectsNameQueries, SQLDataQueries, SQLViewQueries, SQLIndexQueries, mongodbAvailableQueryElems
 from connectionData import drivers, connStrs
 from exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError
 
@@ -52,6 +52,34 @@ class SQLDatabaseReader():
         except pyodbc.Error:
             raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
 
+    async def sql_connect_and_get_objects_name(self, dbType: str, dbPath: str = None, connectionParams: dict = None) -> 'dict[str, list]':
+        try:
+            if dbType == "sqlite3":
+                connectionParams = {"dbName": dbPath.split("/")[-1][:-3:]}
+                with await self.get_sql_connection(dbType, dbPath, connectionParams) as connection:
+                    query = SQLObjectsNameQueries[dbType].format(connectionParams['dbName'])
+                    cursor = await self.get_sql_cursor(connection)
+                    data = await self.run_sql_query_and_get_result(query, cursor)
+            
+            else:
+                originalDbName = connectionParams["dbName"]
+                data = {}
+                
+                if dbType == 'mysql':
+                    connectionParams.update({"dbName": "INFORMATION_SCHEMA"})
+
+                with await self.get_sql_connection(dbType, dbPath, connectionParams) as connection:
+                    query = SQLObjectsNameQueries[dbType]
+                    cursor = await self.get_sql_cursor(connection)
+                    for objectType, specificQuery in query.items():
+                        specificQuery = specificQuery.format(originalDbName)
+                        data.update({objectType: await self.run_sql_query_and_get_result(specificQuery, cursor)})
+                    
+        except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
+            raise e
+    
+        return data            
+    
     async def sql_connect_and_read(self, dbType: str, dbPath: str = None, connectionParams: dict = None, readParams: 'tuple[str, dict | list]' = None) -> 'Future[list]':
         if dbType == "sqlite3":
             connectionParams = {"dbName": dbPath.split("/")[-1][:-3:]}
@@ -204,9 +232,9 @@ class SQLDatabaseReader():
         }
         
         for char in forbbidenChars[dbType]:
-            splittedInput = queryInput.split(char)
+            splitInput = queryInput.split(char)
 
-            if len(splittedInput) > 1:
+            if len(splitInput) > 1:
                 raise ArgumentError(
                     "Potencially malicious query arguments. Query input containing quotes, backticks or squared brackets is always rejected depending on database type, as to avoid SQL injections."
                 )
@@ -334,12 +362,14 @@ class MongoDatabaseReader():
 if __name__ == "__main__":
     mongoReader = MongoDatabaseReader()
     sqlReader = SQLDatabaseReader()
-    print(run(sqlReader.sql_connect_and_read(
+    print(run(sqlReader.sql_connect_and_get_objects_name("postgresql", "", {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433})))
+    
+    '''print(run(sqlReader.sql_connect_and_read(
         dbType= "sqlite3", 
         dbPath= "/home/brunengo/Escritorio/Proshecto/northwind.db", 
         connectionParams= {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, 
         readParams= ("table", {"Customers": None})
-        )))
+        )))'''
     
     '''print(run(mongo_connect_and_read(
         connectionParams= {"user": "dbdummy", "password": "mongo", "host": "localhost", "dbName": "admin", "port": 27018}, 
