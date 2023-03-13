@@ -11,7 +11,7 @@ from exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, 
 
 class SQLDatabaseReader():
 
-    async def get_sql_connection(self, dbType: str, dbPath: str = None, connectionParams: dict = None) -> pyodbc.Connection:
+    async def get_sql_connection(self, dbType: str, dbPath: str = None, connectionParams: dict = None) -> pyodbc.Connection:        
         if dbType not in connStrs:
             raise UnsupportedDBTypeError(f"Unsupported or unexisting database type '{dbType}'.")
         
@@ -25,10 +25,12 @@ class SQLDatabaseReader():
                     raise ArgumentError(f"Missing required arguments for establishing '{dbType}' connection.")
             
             elif dbType == "sqlite3":
-                    connectionStr = connectionStr.format(dbPath)
-                    process = Popen(["cat", dbPath], stdout= PIPE, stderr= PIPE)
-                    if process.communicate()[1]:
-                        raise ArgumentError(f"Database path '{dbPath}' not found; check for any misspellings.")
+                connectionStr = connectionStr.format(dbPath)
+                process = Popen(["cat", dbPath], stdout= PIPE, stderr= PIPE)
+                if process.communicate()[1]:
+                    raise ConnectionError(
+                        f"Database path '{dbPath}' not found or read/write access not granted for current user; check for any misspellings and ensure you have read/write permissions."
+                        )
         
         connectionStr = f"DRIVER={{{drivers[dbType]}}};" + connectionStr
         
@@ -362,7 +364,7 @@ class MongoDatabaseReader():
 if __name__ == "__main__":
     mongoReader = MongoDatabaseReader()
     sqlReader = SQLDatabaseReader()
-    print(run(sqlReader.sql_connect_and_get_objects_name("postgresql", "", {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433})))
+    print(run(sqlReader.sql_connect_and_get_objects_name("sqlite3", "/home/brunengo/Escritorio/Proshecto/northwind.db", {})))
     
     '''print(run(sqlReader.sql_connect_and_read(
         dbType= "sqlite3", 
