@@ -157,9 +157,11 @@ class CommandLineInterface():
             print(Fore.CYAN + "> " + Fore.WHITE + "If authentication is not required, press ENTER and ignore this field.\n")
             args.update({"user": self.get_database_username()})
 
-            print("\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"What is your password for '{args['user']}'?")
-            print(Fore.CYAN + "> " + Fore.WHITE + "If authentication is not required, press ENTER and ignore this field.\n")
-            args.update({"password": self.get_database_password()})
+            args.setdefault("password", "")
+            if args["user"]:
+                print("\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"What is your password for '{args['user']}'?")
+                print()
+                args.update({"password": self.get_database_password()})
         
         return args
        
@@ -174,7 +176,11 @@ class CommandLineInterface():
             connArgs.setdefault("dbName", connArgs["dbPath"].split("/")[-1][:-3:])
         
         print(f"\nAttempting connection to {connData}...")
-        await reader.get_sql_connection(connArgs["dbType"], connArgs["dbPath"], connArgs)  
+        
+        if isinstance(reader, SQLDatabaseReader):
+            await reader.get_sql_connection(connArgs["dbType"], connArgs["dbPath"], connArgs)
+        else:
+            await reader.get_mongo_client(connArgs)
         
         print(Fore.GREEN + "> Connection established.")
         return connArgs
@@ -195,12 +201,13 @@ class CommandLineInterface():
             break
 
         if option == "2":
-            availableObjects = await reader.sql_connect_and_get_objects_name(newArgs["dbType"], newArgs["dbPath"], newArgs)
-            
             if isinstance(reader, SQLDatabaseReader):
+                availableObjects = await reader.sql_connect_and_get_objects_name(newArgs["dbType"], newArgs["dbPath"], newArgs)
                 tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "table", newArgs["dbName"])
+            
             else:
-                tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "collection", newArgs["dbName"])
+                availableObjects = await reader.mongo_connect_and_get_objects_name(newArgs)
+                tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "collection", newArgs["dbName"])              
             
             viewNames = self.display_available_objects_and_get_input(availableObjects, "view", newArgs["dbName"], tableOrCollectionNames)
             indexNames = self.display_available_objects_and_get_input(availableObjects, "index", newArgs["dbName"], tableOrCollectionNames)
@@ -212,7 +219,9 @@ class CommandLineInterface():
         print( "\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"Which of the following {objectType}s in '{dbName}' would you like to convert?")
         print(Fore.CYAN + "> " + Fore.WHITE + "Write the appropiate names one by one, then press ENTER. To end, press ENTER without any input.")
         
+        print(availableObjects, objectType)
         availableObjectNames = [obj[1] for obj in availableObjects if obj[0] == objectType]
+        print(availableObjectNames)
         
         if availableObjectNames:   
             if objectType in ('table', 'collection'):
@@ -220,15 +229,16 @@ class CommandLineInterface():
             
             else:
                 printedTitle = 0
-                for availableObj in availableObjects:
+                nonTableOrCollection = [obj for obj in availableObjects if obj[0] not in ('table', 'collection')]
+                for availableObj in nonTableOrCollection:
                     if availableObj[1] in availableObjectNames and all(obj in selectedTablesOrCollections for obj in availableObj[2]):
                         if not printedTitle:
-                            print("\n" + f"{objectType.upper()}{'ES' if objectType == 'index' else 'S'}".center(40, "-"))
-                            printedTitle = 0
+                            print("\n" + f"{objectType.upper()}{'ES' if objectType == 'index' else 'S'}".center(40, "-") + "\n")
+                            printedTitle = 1
                         
-                        print(f"\no {availableObj[1]} DEPENDS ON {', '.join(availableObj[2])}")
+                        print(f"o {availableObj[1]} DEPENDS ON {', '.join(availableObj[2])}")
+                print()
                 
-            
             return self.get_object_names(availableObjectNames, objectType)
         
         return None
