@@ -54,7 +54,7 @@ class SQLDatabaseReader():
         except pyodbc.Error:
             raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
 
-    async def sql_connect_and_get_objects_name(self, dbType: str, dbPath: str = None, connectionParams: dict = None) -> 'dict[str, list]':
+    async def sql_connect_and_get_objects_name(self, dbType: str, dbPath: str = None, connectionParams: dict = None) -> 'list[tuple[str]]':
         try:
             if dbType == "sqlite3":
                 connectionParams = {"dbName": dbPath.split("/")[-1][:-3:]}
@@ -65,7 +65,7 @@ class SQLDatabaseReader():
             
             else:
                 originalDbName = connectionParams["dbName"]
-                data = {}
+                data = []
                 
                 if dbType == 'mysql':
                     connectionParams.update({"dbName": "INFORMATION_SCHEMA"})
@@ -73,9 +73,16 @@ class SQLDatabaseReader():
                 with await self.get_sql_connection(dbType, dbPath, connectionParams) as connection:
                     query = SQLObjectsNameQueries[dbType]
                     cursor = await self.get_sql_cursor(connection)
+                    
                     for objectType, specificQuery in query.items():
                         specificQuery = specificQuery.format(originalDbName)
-                        data.update({objectType: await self.run_sql_query_and_get_result(specificQuery, cursor)})
+                        objectTuples = await self.run_sql_query_and_get_result(specificQuery, cursor)
+
+                        for objectTuple in objectTuples:
+                            objectList = [objectType] 
+                            for elem in objectTuple:
+                                objectList.append(elem) 
+                            data.append(tuple(objectList))
                     
         except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
             raise e
@@ -262,6 +269,40 @@ class MongoDatabaseReader():
         
         return client
 
+    async def mongo_connect_and_get_objects_name(self, connectionParams: dict) -> 'list[tuple[str]]':
+        with await self.get_mongo_client(connectionParams) as client:
+            database = client[connectionParams["dbName"]]
+            collectionNames = await self.run_mongo_query_and_get_result(["getCollectionAndViewNames"], database)
+        
+            collectionNames = list(collectionNames)
+            
+            if "system.views" in collectionNames:
+                sysViewsIndex = collectionNames.index("system.views")
+                collectionNames = collectionNames[:sysViewsIndex:]
+                
+                sysViews = database["system.views"]
+                views = await self.run_mongo_query_and_get_result(["find"], sysViews, "")
+                viewData = [
+                    ("view", viewDict["_id"].split(".")[0], viewDict["_id"].split(".")[1])
+                    for viewDict in views
+                ]
+            
+            collectionData = [
+                ("collection", collectionName)
+                for collectionName in collectionNames
+            ]
+
+            indexData = []
+            for collectionName in collectionNames:
+                indexes = await self.run_mongo_query_and_get_result(["getIndexes"], database[collectionName], "")
+                print(indexes)
+                indexData.extend([
+                    ("index", collectionName, indexName)
+                    for indexName in indexes if indexName != "_id_"
+                    ])
+                     
+            return collectionData + viewData + indexData    
+    
     async def mongo_connect_and_read(self, connectionParams: dict, readParams: 'tuple[str, dict | list]') -> 'Future[list]':
         taskFunctions = {
             "collection": self.create_mongo_collection_tasks,
@@ -364,7 +405,7 @@ class MongoDatabaseReader():
 if __name__ == "__main__":
     mongoReader = MongoDatabaseReader()
     sqlReader = SQLDatabaseReader()
-    print(run(sqlReader.sql_connect_and_get_objects_name("sqlite3", "/home/brunengo/Escritorio/Proshecto/northwind.db", {})))
+    '''print(run(sqlReader.sql_connect_and_get_objects_name("postgresql", "", {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433})))'''
     
     '''print(run(sqlReader.sql_connect_and_read(
         dbType= "sqlite3", 
@@ -373,7 +414,6 @@ if __name__ == "__main__":
         readParams= ("table", {"Customers": None})
         )))'''
     
-    '''print(run(mongo_connect_and_read(
-        connectionParams= {"user": "dbdummy", "password": "mongo", "host": "localhost", "dbName": "admin", "port": 27018}, 
-        readParams= ("index", {"nonexistant": "books"})
+    '''print(run(mongoReader.mongo_connect_and_get_objects_name(
+        connectionParams= {"user": "dbdummy", "password": "mongo", "host": "localhost", "dbName": "books", "port": 27017}
         )))'''
