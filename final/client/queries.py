@@ -6,14 +6,14 @@ SQLDbStructureQueries = {
 SQLObjectsNameQueries = {
     "sqlite3": "SELECT type, name, tbl_name FROM sqlite_master WHERE sql NOTNULL",
     "mysql": {
-        "tables": "SELECT TABLE_NAME FROM TABLES WHERE TABLE_SCHEMA='{0}'",
-        "views": "SELECT TABLE_NAME FROM VIEWS WHERE TABLE_SCHEMA='{0}'",
-        "indexes": "SELECT TABLE_NAME, INDEX_NAME FROM STATISTICS WHERE INDEX_SCHEMA='{0}' AND INDEX_NAME!='PRIMARY'"
+        "table": "SELECT TABLE_NAME FROM TABLES WHERE TABLE_SCHEMA='{0}'",
+        "view": "SELECT TABLE_NAME, VIEW_DEFINITION FROM VIEWS WHERE TABLE_SCHEMA='{0}'",
+        "index": "SELECT INDEX_NAME, TABLE_NAME FROM STATISTICS WHERE INDEX_SCHEMA='{0}' AND INDEX_NAME!='PRIMARY'"
     },
     "postgresql": {
-        "tables": "SELECT tablename FROM pg_tables WHERE schemaname='public'",
-        "views": "SELECT viewname FROM pg_views WHERE schemaname='public'",
-        "indexes": "SELECT tablename, indexname FROM pg_indexes WHERE schemaname='public' AND indexname NOT LIKE '%\_pkey'"
+        "table": "SELECT tablename FROM pg_tables WHERE schemaname='public'",
+        "view": "SELECT viewname, definition FROM pg_views WHERE schemaname='public'",
+        "index": "SELECT indexname, tablename FROM pg_indexes WHERE schemaname='public' AND indexname NOT LIKE '%\_pkey'"
     }
 }
 
@@ -39,5 +39,6 @@ mongodbAvailableQueryElems = {
     "find": ".find({0})",
     "limit": ".limit({1})",
     "skip": ".skip({2})",
-    "getIndexes": ".index_information()"
+    "getIndexes": ".index_information()",
+    "getCollectionAndViewNames": ".list_collection_names()",
 }

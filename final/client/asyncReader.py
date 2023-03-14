@@ -67,7 +67,7 @@ class SQLDatabaseReader():
                 originalDbName = connectionParams["dbName"]
                 data = []
                 
-                if dbType == 'mysql':
+                if dbType == "mysql":
                     connectionParams.update({"dbName": "INFORMATION_SCHEMA"})
 
                 with await self.get_sql_connection(dbType, dbPath, connectionParams) as connection:
@@ -77,6 +77,30 @@ class SQLDatabaseReader():
                     for objectType, specificQuery in query.items():
                         specificQuery = specificQuery.format(originalDbName)
                         objectTuples = await self.run_sql_query_and_get_result(specificQuery, cursor)
+
+                        if objectType == "view" and dbType != "sqlite3":
+                            viewRegexs = {
+                                "mysql": (r"`{0}`\.`(\w+)`;?".format(originalDbName),),
+                                "postgresql": (r"FROM \(*(\w+);?", r"JOIN (\w+);?")
+                            }
+                            
+                            newObjectTuples = []
+                            for view in objectTuples:
+                                viewDefinition = view[1]
+                                viewOriginalTables = []
+
+                                for regex in viewRegexs[dbType]:
+                                    regexResult = findall(regex, viewDefinition)
+                                    viewOriginalTables.extend(list(dict.fromkeys(regexResult)))
+                                
+                                viewList = list(view)
+                                viewList.pop(1)
+                                viewList.append(viewOriginalTables)
+                                
+                                newViewTuple = tuple(viewList)
+                                newObjectTuples.append(newViewTuple)
+
+                            objectTuples = newObjectTuples
 
                         for objectTuple in objectTuples:
                             objectList = [objectType] 
@@ -295,7 +319,6 @@ class MongoDatabaseReader():
             indexData = []
             for collectionName in collectionNames:
                 indexes = await self.run_mongo_query_and_get_result(["getIndexes"], database[collectionName], "")
-                print(indexes)
                 indexData.extend([
                     ("index", collectionName, indexName)
                     for indexName in indexes if indexName != "_id_"
@@ -405,7 +428,7 @@ class MongoDatabaseReader():
 if __name__ == "__main__":
     mongoReader = MongoDatabaseReader()
     sqlReader = SQLDatabaseReader()
-    '''print(run(sqlReader.sql_connect_and_get_objects_name("postgresql", "", {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433})))'''
+    print(run(sqlReader.sql_connect_and_get_objects_name("sqlite3", "/home/brunengo/Escritorio/Proshecto/northwind.db", {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306})))
     
     '''print(run(sqlReader.sql_connect_and_read(
         dbType= "sqlite3", 

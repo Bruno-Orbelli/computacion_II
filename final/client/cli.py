@@ -44,7 +44,7 @@ class CommandLineInterface():
             reader = SQLDatabaseReader()
         
         try:
-            await self.get_objects_to_migrate(originArgs, reader)
+            await self.select_objects_to_migrate(originArgs, reader)
         except (ArgumentError, ExecutionError, UnsupportedDBTypeError, ConnectionError) as e:
             print(Fore.RED + f"> {e}")
             exit(1)
@@ -59,7 +59,7 @@ class CommandLineInterface():
             inp = input(">> ")
 
             if inp not in (str(num) for num in range(1, 5)):
-                print(Fore.RED + "> Invalid option, try again.\n")
+                print(Fore.RED + "\n> Invalid option, try again.\n")
                 continue
                     
             dbFormat = ["sqlite3", "mysql", "postgresql", "mongodb"][int(inp) - 1]
@@ -71,7 +71,7 @@ class CommandLineInterface():
             dbName = input(">> ")
 
             if not fullmatch(r"([a-zA-Z0-9]|_)+", dbName):
-                print(Fore.RED + "> Invalid database name, try again.\n")
+                print(Fore.RED + "\n> Invalid database name, try again.\n")
                 continue
             
             return dbName
@@ -81,7 +81,7 @@ class CommandLineInterface():
             dbPath = input(">> ")
 
             if not fullmatch(r"(\/.+)*(\/.+\.db)+", dbPath):
-                print(Fore.RED + "> Invalid path, try again.\n")
+                print(Fore.RED + "\n> Invalid path, try again.\n")
                 continue
       
             return dbPath
@@ -94,7 +94,7 @@ class CommandLineInterface():
             ipv6re = r"(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))"
             
             if not (fullmatch(ipv4re, dbIP) or fullmatch(ipv6re, dbIP)):
-                print(Fore.RED + "> Invalid IP address, try again.\n")
+                print(Fore.RED + "\n> Invalid IP address, try again.\n")
                 continue
       
             return dbIP
@@ -104,7 +104,7 @@ class CommandLineInterface():
             dbPort = input(">> ")
 
             if dbPort not in (str(i) for i in range(1024, 65535)):
-                print(Fore.RED + "> Invalid port number, try again (valid port numbers range from 1024 to 65535).\n")
+                print(Fore.RED + "\n> Invalid port number, try again (valid port numbers range from 1024 to 65535).\n")
                 continue
       
             return int(dbPort)
@@ -114,7 +114,7 @@ class CommandLineInterface():
             username = input(">> ")
 
             if username.isspace():
-                print(Fore.RED + "> Invalid username, try again.\n")
+                print(Fore.RED + "\n> Invalid username, try again.\n")
                 continue
       
             return username
@@ -124,7 +124,7 @@ class CommandLineInterface():
             password = getpass(">> ")
 
             if password.isspace():
-                print(Fore.RED + "> Invalid password, try again.\n")
+                print(Fore.RED + "\n> Invalid password, try again.\n")
                 continue
       
             return password
@@ -173,13 +173,13 @@ class CommandLineInterface():
         if connArgs["dbPath"] is not None:
             connArgs.setdefault("dbName", connArgs["dbPath"].split("/")[-1][:-3:])
         
-        print(f"\nAttempting connection to {connData}...", end= "\r")
+        print(f"\nAttempting connection to {connData}...")
         await reader.get_sql_connection(connArgs["dbType"], connArgs["dbPath"], connArgs)  
         
-        print("\n" + Fore.GREEN + "> Connection established.")
+        print(Fore.GREEN + "> Connection established.")
         return connArgs
     
-    async def get_objects_to_migrate(self, connArgs: 'dict[str, str]', reader: 'SQLDatabaseReader | MongoDatabaseReader'):
+    async def select_objects_to_migrate(self, connArgs: 'dict[str, str]', reader: 'SQLDatabaseReader | MongoDatabaseReader'):
         newArgs = await self.attempt_db_connection(connArgs, reader)
         
         print("\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"Would you like to perform a full migration of '{connArgs['dbName']}' (1) or just convert certain objects (2)?")
@@ -189,16 +189,72 @@ class CommandLineInterface():
             option = input(">> ")
 
             if option not in (str(num) for num in range(1, 3)):
-                print(Fore.RED + "> Invalid option, try again.\n")
+                print(Fore.RED + "\n> Invalid option, try again.\n")
                 continue
       
             break
 
         if option == "2":
             availableObjects = await reader.sql_connect_and_get_objects_name(newArgs["dbType"], newArgs["dbPath"], newArgs)
-            print( "\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"Which of the following objects in '{newArgs['dbName']}' would you like to convert?")
-            print(Fore.CYAN + "> " + Fore.WHITE + "Write the appropiate names one by one, then press ENTER. To end, press ENTER without any input.")
-            print("\n" + "TABLES".center(40, "-") + "\n" + "\no ".join(obj[1] for obj in availableObjects if obj[0] != 'table'))
+            
+            if isinstance(reader, SQLDatabaseReader):
+                tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "table", newArgs["dbName"])
+            else:
+                tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "collection", newArgs["dbName"])
+            
+            viewNames = self.display_available_objects_and_get_input(availableObjects, "view", newArgs["dbName"], tableOrCollectionNames)
+            indexNames = self.display_available_objects_and_get_input(availableObjects, "index", newArgs["dbName"], tableOrCollectionNames)
+        
+        print(tableOrCollectionNames, viewNames, indexNames)
+            
+    def display_available_objects_and_get_input(self, availableObjects: 'list[tuple[str]]', objectType: str, dbName: str, selectedTablesOrCollections: 'list[str]' = None):
+        sleep(0.5)
+        print( "\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"Which of the following {objectType}s in '{dbName}' would you like to convert?")
+        print(Fore.CYAN + "> " + Fore.WHITE + "Write the appropiate names one by one, then press ENTER. To end, press ENTER without any input.")
+        
+        availableObjectNames = [obj[1] for obj in availableObjects if obj[0] == objectType]
+        
+        if availableObjectNames:   
+            if objectType in ('table', 'collection'):
+                print("\n" + f"{objectType.upper()}S".center(40, "-") + "\no " + "\no ".join(availableObjectNames) + "\n")
+            
+            else:
+                printedTitle = 0
+                for availableObj in availableObjects:
+                    if availableObj[1] in availableObjectNames and all(obj in selectedTablesOrCollections for obj in availableObj[2]):
+                        if not printedTitle:
+                            print("\n" + f"{objectType.upper()}{'ES' if objectType == 'index' else 'S'}".center(40, "-"))
+                            printedTitle = 0
+                        
+                        print(f"\no {availableObj[1]} DEPENDS ON {', '.join(availableObj[2])}")
+                
+            
+            return self.get_object_names(availableObjectNames, objectType)
+        
+        return None
+    
+    def get_object_names(self, availableObjectNames: 'list[str]', objectType: str) -> 'list[str]':
+        objects = []
+        objectName = None
+        
+        while objectName != "":
+            if objects == availableObjectNames:
+                break
+            
+            objectName = input(">> ")
+            
+            if objectName not in availableObjectNames + [""]:
+                print(Fore.RED + f"\n> {objectType.capitalize()} '{objectName}' does not exist, check for any misspellings.\n")
+                continue
+            
+            elif objectName in objects:
+                print(Fore.RED + f"\n> {objectType.capitalize()} '{objectName}' has already been selected, try again.\n")
+                continue
+
+            elif objectName != "":
+                objects.append(objectName)
+        
+        return objects
             
 if __name__ == "__main__":
     cli = CommandLineInterface()
