@@ -6,7 +6,7 @@ SQLDbStructureQueries = {
 SQLObjectsNameQueries = {
     "sqlite3": "SELECT type, name, tbl_name FROM sqlite_master WHERE sql NOTNULL",
     "mysql": {
-        "table": "SELECT TABLE_NAME FROM TABLES WHERE TABLE_SCHEMA='{0}'",
+        "table": "SELECT TABLE_NAME FROM TABLES WHERE TABLE_SCHEMA='{0}' AND TABLE_TYPE='BASE TABLE'",
         "view": "SELECT TABLE_NAME, VIEW_DEFINITION FROM VIEWS WHERE TABLE_SCHEMA='{0}'",
         "index": "SELECT INDEX_NAME, TABLE_NAME FROM STATISTICS WHERE INDEX_SCHEMA='{0}' AND INDEX_NAME!='PRIMARY'"
     },

@@ -101,6 +101,19 @@ class SQLDatabaseReader():
                                 newObjectTuples.append(newViewTuple)
 
                             objectTuples = newObjectTuples
+                        
+                        elif objectType == "index":
+                            newObjectTuples = []
+                            for index in objectTuples:
+                                indexOriginalTable = [index[1]]
+                                indexList = list(index)
+                                indexList.pop(1)
+                                indexList.append(indexOriginalTable)
+
+                                newIndexTuple = tuple(indexList)
+                                newObjectTuples.append(newIndexTuple)
+                            
+                            objectTuples = newObjectTuples
 
                         for objectTuple in objectTuples:
                             objectList = [objectType] 
@@ -279,7 +292,10 @@ class MongoDatabaseReader():
 
     async def get_mongo_client(self, connectionParams: dict) -> pymongo.MongoClient:
         try:
-            client = pymongo.MongoClient(connStrs["mongodb"].format(**connectionParams))
+            if connectionParams["user"]:
+                client = pymongo.MongoClient(connStrs["mongodb"]["auth"].format(**connectionParams))
+            else:
+                client = pymongo.MongoClient(connStrs["mongodb"]["nonauth"].format(**connectionParams))
         
         except (KeyError, pymongo.errors.ServerSelectionTimeoutError, pymongo.errors.OperationFailure) as e:
             if isinstance(e, KeyError):
@@ -296,7 +312,13 @@ class MongoDatabaseReader():
     async def mongo_connect_and_get_objects_name(self, connectionParams: dict) -> 'list[tuple[str]]':
         with await self.get_mongo_client(connectionParams) as client:
             database = client[connectionParams["dbName"]]
-            collectionNames = await self.run_mongo_query_and_get_result(["getCollectionAndViewNames"], database)
+            
+            try:
+                collectionNames = await self.run_mongo_query_and_get_result(["getCollectionAndViewNames"], database)
+            except pymongo.errors.OperationFailure:
+                raise ExecutionError(
+                    f"The provided user does not have the required permissions to fully access database `{connectionParams['dbName']}`. Try specifying another user or modifying its permissions."
+                    )
         
             collectionNames = list(collectionNames)
             
@@ -307,7 +329,7 @@ class MongoDatabaseReader():
                 sysViews = database["system.views"]
                 views = await self.run_mongo_query_and_get_result(["find"], sysViews, "")
                 viewData = [
-                    ("view", viewDict["_id"].split(".")[0], viewDict["_id"].split(".")[1])
+                    ("view", viewDict["_id"].split(".")[1], [viewDict["_id"].split(".")[0]])
                     for viewDict in views
                 ]
             
@@ -320,7 +342,7 @@ class MongoDatabaseReader():
             for collectionName in collectionNames:
                 indexes = await self.run_mongo_query_and_get_result(["getIndexes"], database[collectionName], "")
                 indexData.extend([
-                    ("index", collectionName, indexName)
+                    ("index", indexName, [collectionName])
                     for indexName in indexes if indexName != "_id_"
                     ])
                      

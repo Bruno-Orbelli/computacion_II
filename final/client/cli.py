@@ -44,13 +44,12 @@ class CommandLineInterface():
             reader = SQLDatabaseReader()
         
         try:
-            await self.select_objects_to_migrate(originArgs, reader)
+            objectsToMigrate = await self.select_objects_to_migrate(originArgs, reader)
         except (ArgumentError, ExecutionError, UnsupportedDBTypeError, ConnectionError) as e:
-            print(Fore.RED + f"> {e}")
+            print("\n" + Fore.RED + f"> {e}\n")
             exit(1)
 
         destinationArgs = self.get_args(1)
-        print(originArgs, destinationArgs)
      
     def get_database_format(self) -> str:
         dbFormat = None
@@ -187,6 +186,8 @@ class CommandLineInterface():
     
     async def select_objects_to_migrate(self, connArgs: 'dict[str, str]', reader: 'SQLDatabaseReader | MongoDatabaseReader'):
         newArgs = await self.attempt_db_connection(connArgs, reader)
+        print(connArgs)
+        objectsToMigrate = {}
         
         print("\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"Would you like to perform a full migration of '{connArgs['dbName']}' (1) or just convert certain objects (2)?")
         print()
@@ -200,48 +201,60 @@ class CommandLineInterface():
       
             break
 
-        if option == "2":
+        if option == "1":
             if isinstance(reader, SQLDatabaseReader):
                 availableObjects = await reader.sql_connect_and_get_objects_name(newArgs["dbType"], newArgs["dbPath"], newArgs)
-                tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "table", newArgs["dbName"])
+                print(availableObjects)
+        
+        else:
+            print(connArgs["dbName"])
+            
+            if isinstance(reader, SQLDatabaseReader):
+                availableObjects = await reader.sql_connect_and_get_objects_name(newArgs["dbType"], newArgs["dbPath"], newArgs)
+                tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "table", connArgs["dbName"])
+                objectsToMigrate.update({"tables": tableOrCollectionNames})
             
             else:
                 availableObjects = await reader.mongo_connect_and_get_objects_name(newArgs)
-                tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "collection", newArgs["dbName"])              
+                tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "collection", connArgs["dbName"])
+                objectsToMigrate.update({"collections": tableOrCollectionNames})        
             
-            viewNames = self.display_available_objects_and_get_input(availableObjects, "view", newArgs["dbName"], tableOrCollectionNames)
-            indexNames = self.display_available_objects_and_get_input(availableObjects, "index", newArgs["dbName"], tableOrCollectionNames)
+            viewNames = self.display_available_objects_and_get_input(availableObjects, "view", connArgs["dbName"], tableOrCollectionNames)
+            indexNames = self.display_available_objects_and_get_input(availableObjects, "index", connArgs["dbName"], tableOrCollectionNames)
+            objectsToMigrate.update({"views": viewNames, "indexes": indexNames})
         
-        print(tableOrCollectionNames, viewNames, indexNames)
-            
+        return objectsToMigrate
+               
     def display_available_objects_and_get_input(self, availableObjects: 'list[tuple[str]]', objectType: str, dbName: str, selectedTablesOrCollections: 'list[str]' = None):
+        availableObjectNames = [obj[1] for obj in availableObjects if obj[0] == objectType]
+        nonTableOrCollection = [obj for obj in availableObjects if obj[0] not in ('table', 'collection')]
+        
+        if selectedTablesOrCollections:
+            availableViewsOrIndexes, availableViewOrIndexNames = [], []
+            for availableObj in nonTableOrCollection:
+                if availableObj[1] in availableObjectNames and all(obj in selectedTablesOrCollections for obj in availableObj[2]):
+                    availableViewsOrIndexes.append(availableObj)
+                    availableViewOrIndexNames.append(availableObj[1])
+        
+        if not availableObjectNames or (objectType in ("view", "index") and not availableViewsOrIndexes):
+            return None
+        
+        print(dbName)
+        
         sleep(0.5)
-        print( "\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"Which of the following {objectType}s in '{dbName}' would you like to convert?")
+        print( "\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"Which of the following {objectType}{'es' if objectType == 'index' else 's'} in '{dbName}' would you like to convert?")
         print(Fore.CYAN + "> " + Fore.WHITE + "Write the appropiate names one by one, then press ENTER. To end, press ENTER without any input.")
         
-        print(availableObjects, objectType)
-        availableObjectNames = [obj[1] for obj in availableObjects if obj[0] == objectType]
-        print(availableObjectNames)
-        
-        if availableObjectNames:   
-            if objectType in ('table', 'collection'):
-                print("\n" + f"{objectType.upper()}S".center(40, "-") + "\no " + "\no ".join(availableObjectNames) + "\n")
-            
-            else:
-                printedTitle = 0
-                nonTableOrCollection = [obj for obj in availableObjects if obj[0] not in ('table', 'collection')]
-                for availableObj in nonTableOrCollection:
-                    if availableObj[1] in availableObjectNames and all(obj in selectedTablesOrCollections for obj in availableObj[2]):
-                        if not printedTitle:
-                            print("\n" + f"{objectType.upper()}{'ES' if objectType == 'index' else 'S'}".center(40, "-") + "\n")
-                            printedTitle = 1
-                        
-                        print(f"o {availableObj[1]} DEPENDS ON {', '.join(availableObj[2])}")
-                print()
-                
+        if objectType in ('table', 'collection'):
+            print("\n" + f"{objectType.upper()}S".center(40, "-") + "\n\no " + "\no ".join(availableObjectNames) + "\n")
             return self.get_object_names(availableObjectNames, objectType)
-        
-        return None
+            
+        else:
+            print("\n" + f"{objectType.upper()}{'ES' if objectType == 'index' else 'S'}".center(40, "-") + "\n")
+            for availableViewOrIndex in availableViewsOrIndexes:
+                print(f"o {availableViewOrIndex[1]} DEPENDS ON {', '.join(availableViewOrIndex[2])}")
+            print()
+            return self.get_object_names(availableViewOrIndexNames, objectType)        
     
     def get_object_names(self, availableObjectNames: 'list[str]', objectType: str) -> 'list[str]':
         objects = []
