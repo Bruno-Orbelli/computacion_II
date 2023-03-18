@@ -4,7 +4,11 @@ SQLDbStructureQueries = {
 }
 
 SQLObjectsNameQueries = {
-    "sqlite3": "SELECT type, name, tbl_name FROM sqlite_master WHERE sql NOTNULL",
+    "sqlite3": {
+        "table": "SELECT name FROM sqlite_master WHERE sql NOTNULL AND type='table'",
+        "view": "SELECT name, sql FROM sqlite_master WHERE sql NOTNULL and type='view'",
+        "index": "SELECT name, tbl_name FROM sqlite_master WHERE sql NOTNULL and type='index'",
+    },
     "mysql": {
         "table": "SELECT TABLE_NAME FROM TABLES WHERE TABLE_SCHEMA='{0}' AND TABLE_TYPE='BASE TABLE'",
         "view": "SELECT TABLE_NAME, VIEW_DEFINITION FROM VIEWS WHERE TABLE_SCHEMA='{0}'",

@@ -186,7 +186,6 @@ class CommandLineInterface():
     
     async def select_objects_to_migrate(self, connArgs: 'dict[str, str]', reader: 'SQLDatabaseReader | MongoDatabaseReader'):
         newArgs = await self.attempt_db_connection(connArgs, reader)
-        print(connArgs)
         objectsToMigrate = {}
         
         print("\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"Would you like to perform a full migration of '{connArgs['dbName']}' (1) or just convert certain objects (2)?")
@@ -207,8 +206,6 @@ class CommandLineInterface():
                 print(availableObjects)
         
         else:
-            print(connArgs["dbName"])
-            
             if isinstance(reader, SQLDatabaseReader):
                 availableObjects = await reader.sql_connect_and_get_objects_name(newArgs["dbType"], newArgs["dbPath"], newArgs)
                 tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "table", connArgs["dbName"])
@@ -231,10 +228,16 @@ class CommandLineInterface():
         
         if selectedTablesOrCollections:
             availableViewsOrIndexes, availableViewOrIndexNames = [], []
-            for availableObj in nonTableOrCollection:
-                if availableObj[1] in availableObjectNames and all(obj in selectedTablesOrCollections for obj in availableObj[2]):
+            
+            for availableObj in [obj for obj in nonTableOrCollection if obj[1] in availableObjectNames]:
+                if all(obj in selectedTablesOrCollections for obj in availableObj[2]):
                     availableViewsOrIndexes.append(availableObj)
                     availableViewOrIndexNames.append(availableObj[1])
+            
+            for apparentlyNotAvailable in [obj for obj in nonTableOrCollection if (obj[1] in availableObjectNames and obj not in availableViewsOrIndexes)]:
+                if all(obj in selectedTablesOrCollections + availableViewOrIndexNames for obj in apparentlyNotAvailable[2]):
+                    availableViewsOrIndexes.append(apparentlyNotAvailable)
+                    availableViewOrIndexNames.append(apparentlyNotAvailable[1])
         
         if not availableObjectNames or (objectType in ("view", "index") and not availableViewsOrIndexes):
             return None

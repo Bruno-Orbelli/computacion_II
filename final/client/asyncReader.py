@@ -53,73 +53,72 @@ class SQLDatabaseReader():
             return [description[0] for description in cursor.description]
         except pyodbc.Error:
             raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
-
+   
     async def sql_connect_and_get_objects_name(self, dbType: str, dbPath: str = None, connectionParams: dict = None) -> 'list[tuple[str]]':
         try:
             if dbType == "sqlite3":
                 connectionParams = {"dbName": dbPath.split("/")[-1][:-3:]}
-                with await self.get_sql_connection(dbType, dbPath, connectionParams) as connection:
-                    query = SQLObjectsNameQueries[dbType].format(connectionParams['dbName'])
-                    cursor = await self.get_sql_cursor(connection)
-                    data = await self.run_sql_query_and_get_result(query, cursor)
             
-            else:
-                originalDbName = connectionParams["dbName"]
-                data = []
+            originalDbName = connectionParams["dbName"]
+            data = []
                 
-                if dbType == "mysql":
-                    connectionParams.update({"dbName": "INFORMATION_SCHEMA"})
+            if dbType == "mysql":
+                connectionParams.update({"dbName": "INFORMATION_SCHEMA"})
 
-                with await self.get_sql_connection(dbType, dbPath, connectionParams) as connection:
-                    query = SQLObjectsNameQueries[dbType]
-                    cursor = await self.get_sql_cursor(connection)
+            with await self.get_sql_connection(dbType, dbPath, connectionParams) as connection:
+                query = SQLObjectsNameQueries[dbType]
+                cursor = await self.get_sql_cursor(connection)
                     
-                    for objectType, specificQuery in query.items():
-                        specificQuery = specificQuery.format(originalDbName)
-                        objectTuples = await self.run_sql_query_and_get_result(specificQuery, cursor)
+                for objectType, specificQuery in query.items():
+                    specificQuery = specificQuery.format(originalDbName)
+                    objectTuples = await self.run_sql_query_and_get_result(specificQuery, cursor)
 
-                        if objectType == "view" and dbType != "sqlite3":
-                            viewRegexs = {
-                                "mysql": (r"`{0}`\.`(\w+)`;?".format(originalDbName),),
-                                "postgresql": (r"FROM \(*(\w+);?", r"JOIN (\w+);?")
-                            }
+                    if objectType == "view":
+                        viewRegexs = {
+                            "sqlite3": (
+                                r"(from|froM|frOm|frOM|fRom|fRoM|fROm|fROM|From|FroM|FrOm|FrOM|FRom|FRoM|FROm|FROM)\s+\[?(\w+( +\w+)*)\]?;?", 
+                                r"(join|joiN|joIn|joIN|jOin|jOiN|jOIn|jOIN|Join|JoiN|JoIn|JoIN|JOin|JOiN|JOIn|JOIN)\s+\[?(\w+( +\w+)*)\]?(\s|\w)+(on|oN|On|ON);?",
+                            ),
+                            "mysql": (r"`{0}`\.`(\w+)`;?".format(originalDbName),),
+                            "postgresql": (r"FROM \(*(\w+);?", r"JOIN (\w+);?")
+                        }
                             
-                            newObjectTuples = []
-                            for view in objectTuples:
-                                viewDefinition = view[1]
-                                viewOriginalTables = []
+                        newObjectTuples = []
+                        for view in objectTuples:
+                            viewDefinition = view[1]
+                            viewOriginalTables = []
 
-                                for regex in viewRegexs[dbType]:
-                                    regexResult = findall(regex, viewDefinition)
-                                    viewOriginalTables.extend(list(dict.fromkeys(regexResult)))
+                            for regex in viewRegexs[dbType]:
+                                regexResult = findall(regex, viewDefinition)
+                                viewOriginalTables.extend(list(dict.fromkeys([regexTuple[1].strip() for regexTuple in regexResult] if dbType == 'sqlite3' else regexResult)))
                                 
-                                viewList = list(view)
-                                viewList.pop(1)
-                                viewList.append(viewOriginalTables)
+                            viewList = list(view)
+                            viewList.pop(1)
+                            viewList.append(viewOriginalTables)
                                 
-                                newViewTuple = tuple(viewList)
-                                newObjectTuples.append(newViewTuple)
+                            newViewTuple = tuple(viewList)
+                            newObjectTuples.append(newViewTuple)
 
-                            objectTuples = newObjectTuples
+                        objectTuples = newObjectTuples
                         
-                        elif objectType == "index":
-                            newObjectTuples = []
-                            for index in objectTuples:
-                                indexOriginalTable = [index[1]]
-                                indexList = list(index)
-                                indexList.pop(1)
-                                indexList.append(indexOriginalTable)
+                    elif objectType == "index":
+                        newObjectTuples = []
+                        for index in objectTuples:
+                            indexOriginalTable = [index[1]]
+                            indexList = list(index)
+                            indexList.pop(1)
+                            indexList.append(indexOriginalTable)
 
-                                newIndexTuple = tuple(indexList)
-                                newObjectTuples.append(newIndexTuple)
+                            newIndexTuple = tuple(indexList)
+                            newObjectTuples.append(newIndexTuple)
                             
-                            objectTuples = newObjectTuples
+                        objectTuples = newObjectTuples
 
-                        for objectTuple in objectTuples:
-                            objectList = [objectType] 
-                            for elem in objectTuple:
-                                objectList.append(elem) 
-                            data.append(tuple(objectList))
+                    for objectTuple in objectTuples:
+                        objectList = [objectType] 
+                        for elem in objectTuple:
+                            objectList.append(elem) 
+                        data.append(tuple(objectList))
                     
         except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
             raise e
