@@ -212,7 +212,9 @@ class CommandLineInterface():
                 objectsToMigrate.update({"tables": tableOrCollectionNames})
             
             else:
+                print("it came here")
                 availableObjects = await reader.mongo_connect_and_get_objects_name(newArgs)
+                print(availableObjects)
                 tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "collection", connArgs["dbName"])
                 objectsToMigrate.update({"collections": tableOrCollectionNames})        
             
@@ -223,6 +225,7 @@ class CommandLineInterface():
         return objectsToMigrate
                
     def display_available_objects_and_get_input(self, availableObjects: 'list[tuple[str]]', objectType: str, dbName: str, selectedTablesOrCollections: 'list[str]' = None):
+        print(availableObjects)
         availableObjectNames = [obj[1] for obj in availableObjects if obj[0] == objectType]
         nonTableOrCollection = [obj for obj in availableObjects if obj[0] not in ('table', 'collection')]
         

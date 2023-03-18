@@ -322,15 +322,16 @@ class MongoDatabaseReader():
             collectionNames = list(collectionNames)
             
             if "system.views" in collectionNames:
-                sysViewsIndex = collectionNames.index("system.views")
-                collectionNames = collectionNames[:sysViewsIndex:]
-                
                 sysViews = database["system.views"]
                 views = await self.run_mongo_query_and_get_result(["find"], sysViews, "")
                 viewData = [
-                    ("view", viewDict["_id"].split(".")[1], [viewDict["_id"].split(".")[0]])
+                    ("view", viewDict["_id"].split(".")[1], [viewDict["viewOn"]])
                     for viewDict in views
                 ]
+
+                for viewTuple in viewData:
+                    if viewTuple[1] in collectionNames:
+                        collectionNames.remove(viewTuple[1])
             
             collectionData = [
                 ("collection", collectionName)
