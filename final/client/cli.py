@@ -177,9 +177,9 @@ class CommandLineInterface():
         print(f"\nAttempting connection to {connData}...")
         
         if isinstance(reader, SQLDatabaseReader):
-            await reader.get_sql_connection(connArgs["dbType"], connArgs["dbPath"], connArgs)
+            await reader.get_connection(connArgs["dbType"], connArgs["dbPath"], connArgs)
         else:
-            await reader.get_mongo_client(connArgs)
+            await reader.get_client(connArgs)
         
         print(Fore.GREEN + "> Connection established.")
         return connArgs
@@ -207,14 +207,12 @@ class CommandLineInterface():
         
         else:
             if isinstance(reader, SQLDatabaseReader):
-                availableObjects = await reader.sql_connect_and_get_objects_name(newArgs["dbType"], newArgs["dbPath"], newArgs)
+                availableObjects = await reader.connect_and_get_objects_description(newArgs["dbType"], newArgs["dbPath"], newArgs)
                 tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "table", connArgs["dbName"])
                 objectsToMigrate.update({"tables": tableOrCollectionNames})
             
             else:
-                print("it came here")
-                availableObjects = await reader.mongo_connect_and_get_objects_name(newArgs)
-                print(availableObjects)
+                availableObjects = await reader.connect_and_get_objects_description(newArgs)
                 tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "collection", connArgs["dbName"])
                 objectsToMigrate.update({"collections": tableOrCollectionNames})        
             
@@ -225,7 +223,6 @@ class CommandLineInterface():
         return objectsToMigrate
                
     def display_available_objects_and_get_input(self, availableObjects: 'list[tuple[str]]', objectType: str, dbName: str, selectedTablesOrCollections: 'list[str]' = None):
-        print(availableObjects)
         availableObjectNames = [obj[1] for obj in availableObjects if obj[0] == objectType]
         nonTableOrCollection = [obj for obj in availableObjects if obj[0] not in ('table', 'collection')]
         
@@ -249,9 +246,11 @@ class CommandLineInterface():
         
         sleep(0.5)
         print( "\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"Which of the following {objectType}{'es' if objectType == 'index' else 's'} in '{dbName}' would you like to convert?")
-        print(Fore.CYAN + "> " + Fore.WHITE + "Write the appropiate names one by one, then press ENTER. To end, press ENTER without any input.")
+        print(Fore.CYAN + "> " + Fore.WHITE + f"Write the appropiate names one by one, {'in single quotes, ' if objectType in ('table', 'collection') else ''}then press ENTER. To end, press ENTER without any input.")
         
         if objectType in ('table', 'collection'):
+            print(Fore.CYAN + "> " + Fore.WHITE + "You can specify row limit and offset/skip by using the optional flags -l (integer) and -osk (integer), respectively, after each table/collection's name.")
+            print(Fore.CYAN + "> " + Fore.WHITE + "E.g: \"'foo' -l 70 -osk 5\" will select the first 70 rows of table/collection 'foo' for conversion, starting from the 6th row.")
             print("\n" + f"{objectType.upper()}S".center(40, "-") + "\n\no " + "\no ".join(availableObjectNames) + "\n")
             return self.get_object_names(availableObjectNames, objectType)
             

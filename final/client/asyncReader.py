@@ -11,7 +11,7 @@ from exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, 
 
 class SQLDatabaseReader():
 
-    async def get_sql_connection(self, dbType: str, dbPath: str = None, connectionParams: dict = None) -> pyodbc.Connection:        
+    async def get_connection(self, dbType: str, dbPath: str = None, connectionParams: dict = None) -> pyodbc.Connection:        
         if dbType not in connStrs:
             raise UnsupportedDBTypeError(f"Unsupported or unexisting database type '{dbType}'.")
         
@@ -42,7 +42,7 @@ class SQLDatabaseReader():
                 "Failed to establish connection with {host}:{port} (database `{dbName}`).\nEnsure: \n - server is running and accepting TCP/IP connections at that address. \n - the correct database type has been specified. \n - other requiered arguments (username, password, ...) are not incorrect.".format(**connectionParams)
                 )
         
-    async def get_sql_cursor(self, connObject) -> pyodbc.Cursor:
+    async def get_cursor(self, connObject) -> pyodbc.Cursor:
         try:
             return connObject.cursor()
         except pyodbc.Error:
@@ -54,7 +54,7 @@ class SQLDatabaseReader():
         except pyodbc.Error:
             raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
    
-    async def sql_connect_and_get_objects_name(self, dbType: str, dbPath: str = None, connectionParams: dict = None) -> 'list[tuple[str]]':
+    async def connect_and_get_objects_description(self, dbType: str, dbPath: str = None, connectionParams: dict = None) -> 'list[tuple[str]]':
         try:
             if dbType == "sqlite3":
                 connectionParams = {"dbName": dbPath.split("/")[-1][:-3:]}
@@ -65,54 +65,19 @@ class SQLDatabaseReader():
             if dbType == "mysql":
                 connectionParams.update({"dbName": "INFORMATION_SCHEMA"})
 
-            with await self.get_sql_connection(dbType, dbPath, connectionParams) as connection:
+            with await self.get_connection(dbType, dbPath, connectionParams) as connection:
                 query = SQLObjectsNameQueries[dbType]
-                cursor = await self.get_sql_cursor(connection)
+                cursor = await self.get_cursor(connection)
                     
                 for objectType, specificQuery in query.items():
                     specificQuery = specificQuery.format(originalDbName)
-                    objectTuples = await self.run_sql_query_and_get_result(specificQuery, cursor)
+                    objectTuples = await self.run_query_and_get_result(specificQuery, cursor)
 
                     if objectType == "view":
-                        viewRegexs = {
-                            "sqlite3": (
-                                r"(from|froM|frOm|frOM|fRom|fRoM|fROm|fROM|From|FroM|FrOm|FrOM|FRom|FRoM|FROm|FROM)\s+\[?(\w+( +\w+)*)\]?;?", 
-                                r"(join|joiN|joIn|joIN|jOin|jOiN|jOIn|jOIN|Join|JoiN|JoIn|JoIN|JOin|JOiN|JOIn|JOIN)\s+\[?(\w+( +\w+)*)\]?(\s|\w)+(on|oN|On|ON);?",
-                            ),
-                            "mysql": (r"`{0}`\.`(\w+)`;?".format(originalDbName),),
-                            "postgresql": (r"FROM \(*(\w+);?", r"JOIN (\w+);?")
-                        }
-                            
-                        newObjectTuples = []
-                        for view in objectTuples:
-                            viewDefinition = view[1]
-                            viewOriginalTables = []
-
-                            for regex in viewRegexs[dbType]:
-                                regexResult = findall(regex, viewDefinition)
-                                viewOriginalTables.extend(list(dict.fromkeys([regexTuple[1].strip() for regexTuple in regexResult] if dbType == 'sqlite3' else regexResult)))
-                                
-                            viewList = list(view)
-                            viewList.pop(1)
-                            viewList.append(viewOriginalTables)
-                                
-                            newViewTuple = tuple(viewList)
-                            newObjectTuples.append(newViewTuple)
-
-                        objectTuples = newObjectTuples
+                        objectTuples = self.build_views_description(dbType, objectTuples, originalDbName)
                         
                     elif objectType == "index":
-                        newObjectTuples = []
-                        for index in objectTuples:
-                            indexOriginalTable = [index[1]]
-                            indexList = list(index)
-                            indexList.pop(1)
-                            indexList.append(indexOriginalTable)
-
-                            newIndexTuple = tuple(indexList)
-                            newObjectTuples.append(newIndexTuple)
-                            
-                        objectTuples = newObjectTuples
+                        objectTuples = self.build_views_description(objectTuples)
 
                     for objectTuple in objectTuples:
                         objectList = [objectType] 
@@ -125,20 +90,65 @@ class SQLDatabaseReader():
     
         return data            
     
-    async def sql_connect_and_read(self, dbType: str, dbPath: str = None, connectionParams: dict = None, readParams: 'tuple[str, dict | list]' = None) -> 'Future[list]':
+    def build_views_description(self, dbType: str, objectTuples: 'list[tuple[str]]', originalDbName: str) -> 'list[tuple[str]]':
+        viewRegexs = {
+            "sqlite3": (
+                r"(from|froM|frOm|frOM|fRom|fRoM|fROm|fROM|From|FroM|FrOm|FrOM|FRom|FRoM|FROm|FROM)\s+\[?(\w+( +\w+)*)\]?;?", 
+                r"(join|joiN|joIn|joIN|jOin|jOiN|jOIn|jOIN|Join|JoiN|JoIn|JoIN|JOin|JOiN|JOIn|JOIN)\s+\[?(\w+( +\w+)*)\]?(\s|\w)+(on|oN|On|ON);?",
+            ),
+            "mysql": (r"`{0}`\.`(\w+)`;?".format(originalDbName),),
+            "postgresql": (r"FROM \(*(\w+);?", r"JOIN (\w+);?")
+        }
+
+        def extract_view_original_tables(viewDefinition: str):
+            viewOriginalTables = []
+            for regex in viewRegexs[dbType]:
+                regex_result = findall(regex, viewDefinition)
+                viewOriginalTables.extend(list(dict.fromkeys([regex_tuple[1].strip() for regex_tuple in regex_result] if dbType == 'sqlite3' else regex_result)))
+            
+            return viewOriginalTables
+        
+        newViewTuples = []
+        for view in objectTuples:
+            viewDefinition = view[1]
+            viewOriginalTables = extract_view_original_tables(viewDefinition)
+                                
+            viewList = list(view)
+            viewList.pop(1)
+            viewList.append(viewOriginalTables)
+                                
+            newViewTuple = tuple(viewList)
+            newViewTuples.append(newViewTuple)
+        
+        return newViewTuples
+
+    def build_indexes_description(self, objectTuples: 'list[tuple[str]]') -> 'list[tuple[str]]':
+        newIndexTuples = []
+        for index in objectTuples:
+            indexOriginalTable = [index[1]]
+            indexList = list(index)
+            indexList.pop(1)
+            indexList.append(indexOriginalTable)
+
+            newIndexTuple = tuple(indexList)
+            newIndexTuples.append(newIndexTuple)
+                            
+        return newIndexTuples
+    
+    async def connect_and_read_data(self, dbType: str, dbPath: str = None, connectionParams: dict = None, readParams: 'tuple[str, dict | list]' = None) -> 'Future[list]':
         if dbType == "sqlite3":
             connectionParams = {"dbName": dbPath.split("/")[-1][:-3:]}
         
         taskFunctions = {
-            "table": self.create_sql_table_tasks,
-            "view": self.create_sql_view_tasks,
-            "index": self.create_sql_index_tasks
+            "table": self.create_table_tasks,
+            "view": self.create_view_tasks,
+            "index": self.create_index_tasks
         }
         
         try:
-            with await self.get_sql_connection(dbType, dbPath, connectionParams) as connection:
-                cursor = await self.get_sql_cursor(connection)
-                tasks = await taskFunctions[readParams[0]](dbType, cursor, connectionParams, readParams[1])
+            with await self.get_connection(dbType, dbPath, connectionParams) as connection:
+                cursor = await self.get_cursor(connection)
+                tasks = taskFunctions[readParams[0]](dbType, cursor, connectionParams, readParams[1])
                 data = await gather(*tasks)
                 cursor.close()
             
@@ -147,23 +157,23 @@ class SQLDatabaseReader():
         except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
             raise e
             
-    async def create_sql_table_tasks(self, dbType: str, cursor, connectionParams: dict = None, tablesLimitOffset: 'dict[str, tuple[int]]' = None) -> list:
+    def create_table_tasks(self, dbType: str, cursor, connectionParams: dict = None, tablesLimitOffset: 'dict[str, tuple[int]]' = None) -> list:
         tasks = [
-            create_task(self.build_sql_table_data(dbType, tableName, cursor, connectionParams, LimitOffset))
+            create_task(self.build_table_data(dbType, tableName, cursor, connectionParams, LimitOffset))
             for tableName, LimitOffset in tablesLimitOffset.items()
             ]
         return tasks
         
-    async def create_sql_view_tasks(self, dbType: str, cursor, connectionParams: dict = None, viewNames: list = None) -> list:
+    def create_view_tasks(self, dbType: str, cursor, connectionParams: dict = None, viewNames: list = None) -> list:
         tasks = [
-            create_task(self.build_sql_view_data(dbType, viewName, cursor, connectionParams))
+            create_task(self.build_view_data(dbType, viewName, cursor, connectionParams))
             for viewName in viewNames
             ]
         return tasks
 
-    async def create_sql_index_tasks(self, dbType: str, cursor, connectionParams: dict = None, indexesTables: 'dict[str, str]' = None) -> list:
+    def create_index_tasks(self, dbType: str, cursor, connectionParams: dict = None, indexesTables: 'dict[str, str]' = None) -> list:
         tasks = [
-            create_task(self.build_sql_index_data(dbType, indexName, tableName, cursor, connectionParams))
+            create_task(self.build_index_data(dbType, indexName, tableName, cursor, connectionParams))
             for indexName, tableName in indexesTables.items()
             ]
         return tasks
@@ -177,7 +187,7 @@ class SQLDatabaseReader():
                 )
         return str(process.communicate()[0])
 
-    async def run_sql_query_and_get_result(self, query: str, cursor, *params) -> list:    
+    async def run_query_and_get_result(self, query: str, cursor, *params) -> list:    
         try:
             if params:
                 cursor.execute(query, params)
@@ -192,13 +202,13 @@ class SQLDatabaseReader():
         
         return cursor.fetchall()
 
-    async def build_sql_table_data(self, dbType: str, tableName: str, cursor, connectionParams: dict = None, limitOffset: 'tuple[int, int]' = None) -> 'dict[str, tuple[list]]':
-        self.check_for_sanitized_sql_input(dbType, tableName)
+    async def build_table_data(self, dbType: str, tableName: str, cursor, connectionParams: dict = None, limitOffset: 'tuple[int, int]' = None) -> 'dict[str, tuple[list]]':
+        self.check_for_sanitized_input(dbType, tableName)
         
         try:
             if dbType != "postgresql":
                 structQuery = SQLDbStructureQueries[dbType].format(tableName)
-                tableSQL = await self.run_sql_query_and_get_result(structQuery, cursor)
+                tableSQL = await self.run_query_and_get_result(structQuery, cursor)
             else:
                 tableSQL = await self.get_postgresql_structure(connectionParams, tableName)
             
@@ -208,9 +218,9 @@ class SQLDatabaseReader():
                 dataQuery += " LIMIT ? OFFSET ?"
                 if limitOffset[1] is None:
                     limitOffset = (limitOffset[0], 0)  
-                tableData = await self.run_sql_query_and_get_result(dataQuery, cursor, limitOffset[0], limitOffset[1])  
+                tableData = await self.run_query_and_get_result(dataQuery, cursor, limitOffset[0], limitOffset[1])  
             else:
-                tableData = await self.run_sql_query_and_get_result(dataQuery, cursor)
+                tableData = await self.run_query_and_get_result(dataQuery, cursor)
         
             cols = tuple(await self.get_cursor_description(cursor))
             tableData.insert(0, cols)
@@ -224,12 +234,12 @@ class SQLDatabaseReader():
             tableName: (tableData, tableSQL)
         }
 
-    async def build_sql_view_data(self, dbType: str, viewName: str, cursor, connectionParams: dict = None) -> 'dict[str, list]':
-        self.check_for_sanitized_sql_input(dbType, viewName)
+    async def build_view_data(self, dbType: str, viewName: str, cursor, connectionParams: dict = None) -> 'dict[str, list]':
+        self.check_for_sanitized_input(dbType, viewName)
         
         try:
             viewQuery = SQLViewQueries[dbType].format(viewName)
-            viewData = await self.run_sql_query_and_get_result(viewQuery, cursor)
+            viewData = await self.run_query_and_get_result(viewQuery, cursor)
         
         except (ExecutionError, ConnectionError) as e:
             if isinstance(e, ConnectionError):
@@ -247,17 +257,17 @@ class SQLDatabaseReader():
             viewName: viewData[0]  
             }
 
-    async def build_sql_index_data(self, dbType: str, indexName: str, tableName: str, cursor, connectionParams: dict = None) -> 'dict[str, list]':
+    async def build_index_data(self, dbType: str, indexName: str, tableName: str, cursor, connectionParams: dict = None) -> 'dict[str, list]':
         for name in (indexName, tableName):
-            self.check_for_sanitized_sql_input(dbType, name) 
+            self.check_for_sanitized_input(dbType, name) 
         
         try:
             if dbType != "mysql":
                 indexQuery = SQLIndexQueries[dbType].format(indexName)
-                indexData = await self.run_sql_query_and_get_result(indexQuery, cursor)
+                indexData = await self.run_query_and_get_result(indexQuery, cursor)
             else:
                 indexQuery = SQLIndexQueries[dbType].format(tableName)
-                indexData = await self.run_sql_query_and_get_result(indexQuery, cursor)
+                indexData = await self.run_query_and_get_result(indexQuery, cursor)
                 indexData = findall(r"KEY `{0}` \(`.*`\)".format(indexName), indexData[0][1])
         
         except (ExecutionError, ConnectionError) as e:
@@ -269,7 +279,7 @@ class SQLDatabaseReader():
             f"{indexName}-{tableName}": indexData[0]
             }
 
-    def check_for_sanitized_sql_input(self, dbType: str, queryInput: str) -> None:
+    def check_for_sanitized_input(self, dbType: str, queryInput: str) -> None:
         forbbidenChars = {
             "sqlite3": ["[", "]", "'"],
             "mysql": ["`"],
@@ -289,7 +299,7 @@ class SQLDatabaseReader():
 
 class MongoDatabaseReader():
 
-    async def get_mongo_client(self, connectionParams: dict) -> pymongo.MongoClient:
+    async def get_client(self, connectionParams: dict) -> pymongo.MongoClient:
         try:
             if connectionParams["user"]:
                 client = pymongo.MongoClient(connStrs["mongodb"]["auth"].format(**connectionParams))
@@ -308,12 +318,12 @@ class MongoDatabaseReader():
         
         return client
 
-    async def mongo_connect_and_get_objects_name(self, connectionParams: dict) -> 'list[tuple[str]]':
-        with await self.get_mongo_client(connectionParams) as client:
+    async def connect_and_get_objects_description(self, connectionParams: dict) -> 'list[tuple[str]]':
+        with await self.get_client(connectionParams) as client:
             database = client[connectionParams["dbName"]]
             
             try:
-                collectionNames = await self.run_mongo_query_and_get_result(["getCollectionAndViewNames"], database)
+                collectionNames = await self.run_query_and_get_result(["getCollectionAndViewNames"], database)
             except pymongo.errors.OperationFailure:
                 raise ExecutionError(
                     f"The provided user does not have the required permissions to fully access database `{connectionParams['dbName']}`. Try specifying another user or modifying its permissions."
@@ -323,66 +333,86 @@ class MongoDatabaseReader():
             
             if "system.views" in collectionNames:
                 sysViews = database["system.views"]
-                views = await self.run_mongo_query_and_get_result(["find"], sysViews, "")
-                viewData = [
-                    ("view", viewDict["_id"].split(".")[1], [viewDict["viewOn"]])
-                    for viewDict in views
-                ]
+                collectionNames.remove("system.views")
 
-                for viewTuple in viewData:
+                views = await self.run_query_and_get_result(["find"], sysViews, "")
+                viewTuples = self.build_views_description(list(views))
+
+                for viewTuple in viewTuples:
                     if viewTuple[1] in collectionNames:
                         collectionNames.remove(viewTuple[1])
             
-            collectionData = [
+            collectionTuples = self.build_collections_description()
+            indexTuples = await self.build_indexes_description()           
+                     
+            return collectionTuples + viewTuples + indexTuples    
+    
+    def build_collections_description(self, collectionNames: 'list[str]') -> 'list[tuple[str]]':
+        collectionTuples = [
                 ("collection", collectionName)
                 for collectionName in collectionNames
             ]
-
-            indexData = []
-            for collectionName in collectionNames:
-                indexes = await self.run_mongo_query_and_get_result(["getIndexes"], database[collectionName], "")
-                indexData.extend([
-                    ("index", indexName, [collectionName])
-                    for indexName in indexes if indexName != "_id_"
-                    ])
-                     
-            return collectionData + viewData + indexData    
+        
+        return collectionTuples
     
-    async def mongo_connect_and_read(self, connectionParams: dict, readParams: 'tuple[str, dict | list]') -> 'Future[list]':
+    def build_views_description(self, views: 'list[dict]') -> 'list[tuple[str]]':
+        viewTuples = []
+        
+        for viewDict in views:
+            originalCollections = [viewDict["viewOn"]]
+            lookupsInViewDict = [pipelineDict for pipelineDict in viewDict["pipeline"] if "$lookup" in pipelineDict]
+            originalCollections.extend([lookup["$lookup"]["from"] for lookup in lookupsInViewDict])
+            viewTuples.append(("view", viewDict["_id"].split(".")[1], originalCollections))
+        
+        return viewTuples
+    
+    async def build_indexes_description(self, collectionNames: 'list[str]', database: pymongo.Database) -> 'list[tuple[str]]':
+        indexTuples = []
+            
+        for collectionName in collectionNames:
+            indexes = await self.run_query_and_get_result(["getIndexes"], database[collectionName], "")
+            indexTuples.extend([
+                ("index", indexName, [collectionName])
+                for indexName in indexes if indexName != "_id_"
+                ])
+        
+        return indexTuples
+    
+    async def connect_and_read_data(self, connectionParams: dict, readParams: 'tuple[str, dict | list]') -> 'Future[list]':
         taskFunctions = {
-            "collection": self.create_mongo_collection_tasks,
-            "view": self.create_mongo_view_tasks,
-            "index": self.create_mongo_index_tasks
+            "collection": self.create_collection_tasks,
+            "view": self.create_view_tasks,
+            "index": self.create_index_tasks
         }
         
-        with await self.get_mongo_client(connectionParams) as client:
-            tasks = await taskFunctions[readParams[0]](connectionParams, client, readParams[1])
+        with await self.get_client(connectionParams) as client:
+            tasks = taskFunctions[readParams[0]](connectionParams, client, readParams[1])
             data = await gather(*tasks)
             
         return data
 
-    async def create_mongo_collection_tasks(self, connectionParams: dict, client: pymongo.MongoClient, collectionLimitSkip: 'dict[str, tuple[int]]' = None) -> list:
+    def create_collection_tasks(self, connectionParams: dict, client: pymongo.MongoClient, collectionLimitSkip: 'dict[str, tuple[int]]' = None) -> list:
         tasks = [
-            create_task(self.build_mongo_collection_data(collectionName, client, connectionParams, limitSkip))
+            create_task(self.build_collection_data(collectionName, client, connectionParams, limitSkip))
             for collectionName, limitSkip in collectionLimitSkip.items()
             ]
         return tasks
 
-    async def create_mongo_view_tasks(self, connectionParams: dict, client: pymongo.MongoClient, viewNames: list = None) -> list:
+    def create_view_tasks(self, connectionParams: dict, client: pymongo.MongoClient, viewNames: list = None) -> list:
         tasks = [
-            create_task(self.build_mongo_view_data(viewName, client, connectionParams))
+            create_task(self.build_view_data(viewName, client, connectionParams))
             for viewName in viewNames
             ]
         return tasks
 
-    async def create_mongo_index_tasks(self, connectionParams: dict, client: pymongo.MongoClient, indexesCollection: 'dict[str, str]' = None) -> list:
+    def create_index_tasks(self, connectionParams: dict, client: pymongo.MongoClient, indexesCollection: 'dict[str, str]' = None) -> list:
         tasks = [
-            create_task(self.build_mongo_index_data(indexName, collectionName, client, connectionParams))
+            create_task(self.build_index_data(indexName, collectionName, client, connectionParams))
             for indexName, collectionName in indexesCollection.items()
             ]
         return tasks
 
-    async def run_mongo_query_and_get_result(self, queryElems: list, accesibleObject, *params):
+    async def run_query_and_get_result(self, queryElems: list, accesibleObject, *params):
         try:
             queryObj = "accesibleObject" + "".join(mongodbAvailableQueryElems[elem] for elem in queryElems).format(*params)
             return eval(queryObj)
@@ -390,7 +420,7 @@ class MongoDatabaseReader():
         except (pymongo.errors.ServerSelectionTimeoutError,) as e:
             raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) could not be established or has been lost.\nEnsure: \n - server is running and accepting TCP/IP connections at that address. \n - the correct database type has been specified. \n - other requiered arguments (username, password, ...) are not incorrect.")
 
-    async def build_mongo_collection_data(self, collectionName: str, client: pymongo.MongoClient, connectionParams: dict = None, limitSkip: 'tuple[int]' = None) -> 'dict[str, list]':
+    async def build_collection_data(self, collectionName: str, client: pymongo.MongoClient, connectionParams: dict = None, limitSkip: 'tuple[int]' = None) -> 'dict[str, list]':
         list_of_collections = client[connectionParams['dbName']].list_collection_names()
 
         if not (collectionName in list_of_collections):
@@ -402,10 +432,10 @@ class MongoDatabaseReader():
             if limitSkip:
                 if limitSkip[1] is None:
                     limitSkip = (limitSkip[0], 0)
-                collectionData = await self.run_mongo_query_and_get_result(["find", "limit", "skip"], collection, "", limitSkip[0], limitSkip[1])
+                collectionData = await self.run_query_and_get_result(["find", "limit", "skip"], collection, "", limitSkip[0], limitSkip[1])
             
             else:
-                collectionData = await self.run_mongo_query_and_get_result(["find"], collection, "")
+                collectionData = await self.run_query_and_get_result(["find"], collection, "")
         
         except ConnectionError as e:
             e.args = (e.args[0].format(**connectionParams),)
@@ -415,10 +445,10 @@ class MongoDatabaseReader():
             collectionName: list(collectionData)
         }
 
-    async def build_mongo_view_data(self, viewName: str, client: pymongo.MongoClient, connectionParams: dict = None) -> 'dict[str, dict]':
+    async def build_view_data(self, viewName: str, client: pymongo.MongoClient, connectionParams: dict = None) -> 'dict[str, dict]':
         try:
             views = client[connectionParams['dbName']]['system.views']
-            viewData = await self.run_mongo_query_and_get_result(["find"], views, {"_id": f"{connectionParams['dbName']}.{viewName}"})
+            viewData = await self.run_query_and_get_result(["find"], views, {"_id": f"{connectionParams['dbName']}.{viewName}"})
         
         except ConnectionError as e:
             e.args = (e.args[0].format(**connectionParams),)
@@ -431,10 +461,10 @@ class MongoDatabaseReader():
             viewName: list(viewData)[0]
         }
 
-    async def build_mongo_index_data(self, indexName: str, collectionName: str, client: pymongo.MongoClient, connectionParams: dict = None) -> 'dict[str, dict]':
+    async def build_index_data(self, indexName: str, collectionName: str, client: pymongo.MongoClient, connectionParams: dict = None) -> 'dict[str, dict]':
         try:
             collection = client[connectionParams['dbName']][collectionName]
-            indexData = await self.run_mongo_query_and_get_result(["getIndexes"], collection)
+            indexData = await self.run_query_and_get_result(["getIndexes"], collection)
         
         except ConnectionError as e:
             e.args = (e.args[0].format(**connectionParams),)
@@ -450,7 +480,7 @@ class MongoDatabaseReader():
 if __name__ == "__main__":
     mongoReader = MongoDatabaseReader()
     sqlReader = SQLDatabaseReader()
-    print(run(sqlReader.sql_connect_and_get_objects_name("sqlite3", "/home/brunengo/Escritorio/Proshecto/northwind.db", {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306})))
+    print(run(sqlReader.connect_and_get_objects_description("sqlite3", "/home/brunengo/Escritorio/Proshecto/northwind.db", {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306})))
     
     '''print(run(sqlReader.sql_connect_and_read(
         dbType= "sqlite3", 
