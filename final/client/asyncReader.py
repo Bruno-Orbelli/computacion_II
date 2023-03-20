@@ -77,7 +77,7 @@ class SQLDatabaseReader():
                         objectTuples = self.build_views_description(dbType, objectTuples, originalDbName)
                         
                     elif objectType == "index":
-                        objectTuples = self.build_views_description(objectTuples)
+                        objectTuples = self.build_indexes_description(objectTuples)
 
                     for objectTuple in objectTuples:
                         objectList = [objectType] 
@@ -342,8 +342,8 @@ class MongoDatabaseReader():
                     if viewTuple[1] in collectionNames:
                         collectionNames.remove(viewTuple[1])
             
-            collectionTuples = self.build_collections_description()
-            indexTuples = await self.build_indexes_description()           
+            collectionTuples = self.build_collections_description(collectionNames)
+            indexTuples = await self.build_indexes_description(collectionNames, database)           
                      
             return collectionTuples + viewTuples + indexTuples    
     
@@ -366,7 +366,7 @@ class MongoDatabaseReader():
         
         return viewTuples
     
-    async def build_indexes_description(self, collectionNames: 'list[str]', database: pymongo.Database) -> 'list[tuple[str]]':
+    async def build_indexes_description(self, collectionNames: 'list[str]', database: pymongo.database.Database) -> 'list[tuple[str]]':
         indexTuples = []
             
         for collectionName in collectionNames:

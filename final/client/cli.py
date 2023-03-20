@@ -1,5 +1,5 @@
 from asyncio import run
-from re import fullmatch
+from re import fullmatch, search, split as resplit
 from argparse import ArgumentParser, Namespace
 from getpass import getpass
 import tqdm
@@ -36,7 +36,7 @@ class CommandLineInterface():
         print(title.renderText("ConverSQL"))
         sleep(2)
         
-        originArgs = self.get_args(0)
+        originArgs = self.get_database_server_args(0)
         
         if originArgs["dbType"] == "mongodb":
             reader = MongoDatabaseReader()
@@ -49,7 +49,8 @@ class CommandLineInterface():
             print("\n" + Fore.RED + f"> {e}\n")
             exit(1)
 
-        destinationArgs = self.get_args(1)
+        sleep(0.5)
+        destinationArgs = self.get_database_server_args(1)
      
     def get_database_format(self) -> str:
         dbFormat = None
@@ -128,7 +129,7 @@ class CommandLineInterface():
       
             return password
     
-    def get_args(self, originOrDestination: Literal[0, 1]) -> 'dict[str, str]':
+    def get_database_server_args(self, originOrDestination: Literal[0, 1]) -> 'dict[str, str]':
         print("\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"What is the {['original', 'destination'][originOrDestination]} format of your database (database type {['from', 'to'][originOrDestination]} which you want to convert)?")
         print(Fore.CYAN + "> " + Fore.WHITE + "SQLite3 (1)  MySQL (2)   PostgreSQL (3)  MongoDB (4)\n")
         
@@ -216,33 +217,36 @@ class CommandLineInterface():
                 tableOrCollectionNames = self.display_available_objects_and_get_input(availableObjects, "collection", connArgs["dbName"])
                 objectsToMigrate.update({"collections": tableOrCollectionNames})        
             
-            viewNames = self.display_available_objects_and_get_input(availableObjects, "view", connArgs["dbName"], tableOrCollectionNames)
-            indexNames = self.display_available_objects_and_get_input(availableObjects, "index", connArgs["dbName"], tableOrCollectionNames)
+            viewNames = self.display_available_objects_and_get_input(availableObjects, "view", connArgs["dbName"], [obj[0] for obj in tableOrCollectionNames])
+            indexNames = self.display_available_objects_and_get_input(availableObjects, "index", connArgs["dbName"], [obj[0] for obj in tableOrCollectionNames])
             objectsToMigrate.update({"views": viewNames, "indexes": indexNames})
         
         return objectsToMigrate
                
-    def display_available_objects_and_get_input(self, availableObjects: 'list[tuple[str]]', objectType: str, dbName: str, selectedTablesOrCollections: 'list[str]' = None):
-        availableObjectNames = [obj[1] for obj in availableObjects if obj[0] == objectType]
+    def build_available_objects(self, availableObjects: 'list[tuple[str]]', objectType: str, selectedTablesOrCollections: 'list[str]'):
+        typeSpecificAvailableObjects = [obj for obj in availableObjects if obj[0] == objectType]
         nonTableOrCollection = [obj for obj in availableObjects if obj[0] not in ('table', 'collection')]
         
         if selectedTablesOrCollections:
-            availableViewsOrIndexes, availableViewOrIndexNames = [], []
+            availableViewsOrIndexes = []
             
-            for availableObj in [obj for obj in nonTableOrCollection if obj[1] in availableObjectNames]:
+            for availableObj in typeSpecificAvailableObjects:
                 if all(obj in selectedTablesOrCollections for obj in availableObj[2]):
                     availableViewsOrIndexes.append(availableObj)
-                    availableViewOrIndexNames.append(availableObj[1])
             
-            for apparentlyNotAvailable in [obj for obj in nonTableOrCollection if (obj[1] in availableObjectNames and obj not in availableViewsOrIndexes)]:
-                if all(obj in selectedTablesOrCollections + availableViewOrIndexNames for obj in apparentlyNotAvailable[2]):
+            for apparentlyNotAvailable in [obj for obj in nonTableOrCollection if (obj in typeSpecificAvailableObjects and obj not in availableViewsOrIndexes)]:
+                if all(obj in selectedTablesOrCollections + [obj[1] for obj in availableViewsOrIndexes] for obj in apparentlyNotAvailable[2]):
                     availableViewsOrIndexes.append(apparentlyNotAvailable)
-                    availableViewOrIndexNames.append(apparentlyNotAvailable[1])
+            
+            return availableViewsOrIndexes
         
-        if not availableObjectNames or (objectType in ("view", "index") and not availableViewsOrIndexes):
+        return typeSpecificAvailableObjects
+    
+    def display_available_objects_and_get_input(self, rawAvailableObjects: 'list[tuple[str]]', objectType: str, dbName: str, selectedTablesOrCollections: 'list[str]' = None):
+        availableObjects = self.build_available_objects(rawAvailableObjects, objectType, selectedTablesOrCollections)
+        
+        if not availableObjects:
             return None
-        
-        print(dbName)
         
         sleep(0.5)
         print( "\n" + Fore.CYAN + "> " + Back.CYAN + Fore.BLACK + f"Which of the following {objectType}{'es' if objectType == 'index' else 's'} in '{dbName}' would you like to convert?")
@@ -251,38 +255,64 @@ class CommandLineInterface():
         if objectType in ('table', 'collection'):
             print(Fore.CYAN + "> " + Fore.WHITE + "You can specify row limit and offset/skip by using the optional flags -l (integer) and -osk (integer), respectively, after each table/collection's name.")
             print(Fore.CYAN + "> " + Fore.WHITE + "E.g: \"'foo' -l 70 -osk 5\" will select the first 70 rows of table/collection 'foo' for conversion, starting from the 6th row.")
-            print("\n" + f"{objectType.upper()}S".center(40, "-") + "\n\no " + "\no ".join(availableObjectNames) + "\n")
-            return self.get_object_names(availableObjectNames, objectType)
+            print("\n" + f"{objectType.upper()}S".center(40, "-") + "\n\no " + "\no ".join([obj[1] for obj in availableObjects]) + "\n")
             
         else:
             print("\n" + f"{objectType.upper()}{'ES' if objectType == 'index' else 'S'}".center(40, "-") + "\n")
-            for availableViewOrIndex in availableViewsOrIndexes:
+            for availableViewOrIndex in availableObjects:
                 print(f"o {availableViewOrIndex[1]} DEPENDS ON {', '.join(availableViewOrIndex[2])}")
             print()
-            return self.get_object_names(availableViewOrIndexNames, objectType)        
-    
-    def get_object_names(self, availableObjectNames: 'list[str]', objectType: str) -> 'list[str]':
-        objects = []
-        objectName = None
         
-        while objectName != "":
-            if objects == availableObjectNames:
+        return self.get_object_names_with_limit_offset_skip([obj[1] for obj in availableObjects], objectType)        
+      
+    def get_object_names_with_limit_offset_skip(self, availableObjectNames: 'list[str]', objectType: Literal["table", "collection", "view", "index"]):
+        selectedObjectNames = []
+        receivedInput, limit, offsetOrSkip = None, None, None
+
+        while receivedInput != "":            
+            if selectedObjectNames == availableObjectNames:
                 break
             
-            objectName = input(">> ")
+            receivedInput = input(">> ")
+
+            if objectType in ("table", "collection") and receivedInput:
+                receivedInputList = resplit(r'( -l | -osk )', receivedInput)
+                objectName = fullmatch(r'\'(.+)\'', receivedInputList[0])
+                    
+                if not objectName:
+                    print(Fore.RED + "\n> Invalid table/collection input; remember to quote the object's name and specify any limit or offset/skip with flags -l and -osk.\n")
+                    continue
+
+                if " -l " in receivedInputList:
+                    limit = receivedInputList[receivedInputList.index(" -l ") + 1]
+                if " -osk " in receivedInputList:
+                    offsetOrSkip = receivedInputList[receivedInputList.index(" -osk ") + 1]
+                
+                if limit and not limit.isnumeric():
+                    print(Fore.RED + "\n> Invalid limit or offset/skip input: valid flags are -l and -osk, with only positive integers allowed as arguments.\n")
+                    continue
+                
+                elif offsetOrSkip and not offsetOrSkip.isnumeric():
+                    print(Fore.RED + "\n> Invalid limit or offset/skip input: valid flags are -l and -osk, with only positive integers allowed as arguments.\n")
+                    continue
+
+                objectName = objectName[0][1:-1:]
+
+            else:
+                objectName = receivedInput
             
             if objectName not in availableObjectNames + [""]:
                 print(Fore.RED + f"\n> {objectType.capitalize()} '{objectName}' does not exist, check for any misspellings.\n")
                 continue
             
-            elif objectName in objects:
+            elif objectName in selectedObjectNames:
                 print(Fore.RED + f"\n> {objectType.capitalize()} '{objectName}' has already been selected, try again.\n")
                 continue
 
-            elif objectName != "":
-                objects.append(objectName)
+            elif objectName:
+                selectedObjectNames.append((objectName, limit, offsetOrSkip) if objectType in ("table", "collection") else objectName)
         
-        return objects
+        return selectedObjectNames
             
 if __name__ == "__main__":
     cli = CommandLineInterface()
