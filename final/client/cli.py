@@ -1,7 +1,11 @@
 from asyncio import run
+from dotenv import load_dotenv
+from os import getenv
 from re import fullmatch, search, split as resplit
 from argparse import ArgumentParser, Namespace
 from getpass import getpass
+from copy import deepcopy
+
 import tqdm
 from colorama import Fore, Back, Style, init
 from pyfiglet import Figlet
@@ -9,14 +13,25 @@ from time import sleep
 from typing import Literal
 
 from asyncReader import SQLDatabaseReader, MongoDatabaseReader
-from exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError, InitializationError
+from exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError
 
 class CommandLineInterface():
 
     def __init__(self) -> None:
         self.flags = self.parse_flags()
         init(autoreset= True)
-
+        
+        load_dotenv()
+        self.nested_view_iteration_limit = ("NESTED_VIEW_ITERATION_LIMIT", getenv("NESTED_VIEW_ITERATION_LIMIT"))
+        
+        if self.nested_view_iteration_limit is None:
+            print(
+                "\n" + Fore.RED + f"> Could not read environment variable {self.nested_view_iteration_limit[0]}. Check for any modifications in '.env'.\n"
+            )
+            exit(1)
+        
+        self.nested_view_iteration_limit = int(self.nested_view_iteration_limit[1])
+    
     def parse_flags(self) -> Namespace:
         argParser = ArgumentParser(
             description= """
@@ -183,7 +198,7 @@ class CommandLineInterface():
             await reader.get_client(connArgs)
         
         print(Fore.GREEN + "> Connection established.")
-        return connArgs
+        return deepcopy(connArgs)
     
     async def select_objects_to_migrate(self, connArgs: 'dict[str, str]', reader: 'SQLDatabaseReader | MongoDatabaseReader'):
         newArgs = await self.attempt_db_connection(connArgs, reader)
@@ -203,7 +218,7 @@ class CommandLineInterface():
 
         if option == "1":
             if isinstance(reader, SQLDatabaseReader):
-                availableObjects = await reader.sql_connect_and_get_objects_name(newArgs["dbType"], newArgs["dbPath"], newArgs)
+                availableObjects = await reader.connect_and_get_objects_description(newArgs["dbType"], newArgs["dbPath"], newArgs)
                 print(availableObjects)
         
         else:
@@ -234,9 +249,14 @@ class CommandLineInterface():
                 if all(obj in selectedTablesOrCollections for obj in availableObj[2]):
                     availableViewsOrIndexes.append(availableObj)
             
-            for apparentlyNotAvailable in [obj for obj in nonTableOrCollection if (obj in typeSpecificAvailableObjects and obj not in availableViewsOrIndexes)]:
-                if all(obj in selectedTablesOrCollections + [obj[1] for obj in availableViewsOrIndexes] for obj in apparentlyNotAvailable[2]):
-                    availableViewsOrIndexes.append(apparentlyNotAvailable)
+            for _ in range(self.nested_view_iteration_limit):
+                previousIterationList = deepcopy(availableViewsOrIndexes)
+                for apparentlyNotAvailable in [obj for obj in nonTableOrCollection if (obj in typeSpecificAvailableObjects and obj not in availableViewsOrIndexes)]:
+                    if all(obj in selectedTablesOrCollections + [obj[1] for obj in availableViewsOrIndexes] for obj in apparentlyNotAvailable[2]):
+                        availableViewsOrIndexes.append(apparentlyNotAvailable)
+                
+                if availableViewsOrIndexes == previousIterationList:
+                    break
             
             return availableViewsOrIndexes
         
@@ -263,14 +283,14 @@ class CommandLineInterface():
                 print(f"o {availableViewOrIndex[1]} DEPENDS ON {', '.join(availableViewOrIndex[2])}")
             print()
         
-        return self.get_object_names_with_limit_offset_skip([obj[1] for obj in availableObjects], objectType)        
-      
-    def get_object_names_with_limit_offset_skip(self, availableObjectNames: 'list[str]', objectType: Literal["table", "collection", "view", "index"]):
+        return self.get_object_names_with_limit_offset_skip(availableObjects, objectType, selectedTablesOrCollections)        
+             
+    def get_object_names_with_limit_offset_skip(self, availableObjects: 'list[str]', objectType: Literal["table", "collection", "view", "index"], selectedTablesOrCollections: 'list[str]' = None):
         selectedObjectNames = []
         receivedInput, limit, offsetOrSkip = None, None, None
 
         while receivedInput != "":            
-            if selectedObjectNames == availableObjectNames:
+            if selectedObjectNames == [obj[1] for obj in availableObjects]:
                 break
             
             receivedInput = input(">> ")
@@ -301,15 +321,21 @@ class CommandLineInterface():
             else:
                 objectName = receivedInput
             
-            if objectName not in availableObjectNames + [""]:
+            if objectName not in [obj[1] for obj in availableObjects] + [""]:
                 print(Fore.RED + f"\n> {objectType.capitalize()} '{objectName}' does not exist, check for any misspellings.\n")
                 continue
             
-            elif objectName in selectedObjectNames:
+            if objectName in selectedObjectNames:
                 print(Fore.RED + f"\n> {objectType.capitalize()} '{objectName}' has already been selected, try again.\n")
                 continue
 
-            elif objectName:
+            if objectType == "view":
+                viewTuple = next(filter(lambda obj: obj[1] == objectName, availableObjects), None)
+                if not all(originalTableOrView in selectedTablesOrCollections + selectedObjectNames for originalTableOrView in viewTuple[2]):
+                    print(Fore.RED + f"\n> {objectType.capitalize()} '{objectName}' cannot be selected for conversion, since at least one of the tables/views it depends on has not yet been selected.\n")
+                    continue
+            
+            if objectName:
                 selectedObjectNames.append((objectName, limit, offsetOrSkip) if objectType in ("table", "collection") else objectName)
         
         return selectedObjectNames
