@@ -13,6 +13,7 @@ from time import sleep
 from typing import Literal
 
 from asyncReader import SQLDatabaseReader, MongoDatabaseReader
+from asyncWriter import SQLDatabaseWriter, MongoDatabaseWriter
 from exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError
 
 class CommandLineInterface():
@@ -66,6 +67,21 @@ class CommandLineInterface():
 
         sleep(0.5)
         destinationArgs = self.get_database_server_args(1)
+
+        if destinationArgs["dbType"] == "mongodb":
+            writer = MongoDatabaseWriter()
+            pass
+        else:
+            writer = SQLDatabaseWriter()
+            pass
+
+        try:
+            newDestinationArgs = self.attempt_db_connection(destinationArgs, writer)
+        except (ArgumentError, ExecutionError, UnsupportedDBTypeError, ConnectionError) as e:
+            print("\n" + Fore.RED + f"> {e}\n")
+            exit(1)
+        
+        # Código main que invoque al servidor y realice las operaciones previas necesarias...
      
     def get_database_format(self) -> str:
         dbFormat = None
@@ -180,7 +196,7 @@ class CommandLineInterface():
         
         return args
        
-    async def attempt_db_connection(self, connArgs: 'dict[str, str]', reader: 'SQLDatabaseReader | MongoDatabaseReader') -> None:       
+    async def attempt_db_connection(self, connArgs: 'dict[str, str]', readerOrWriter: 'SQLDatabaseReader | MongoDatabaseReader | SQLDatabaseWriter | MongoDatabaseWriter') -> None:       
         if connArgs["dbType"] == "sqlite3":
             connData = connArgs["dbPath"]
         else:
@@ -192,10 +208,10 @@ class CommandLineInterface():
         
         print(f"\nAttempting connection to {connData}...")
         
-        if isinstance(reader, SQLDatabaseReader):
-            await reader.get_connection(connArgs["dbType"], connArgs["dbPath"], connArgs)
+        if isinstance(readerOrWriter, SQLDatabaseReader) or isinstance(readerOrWriter, SQLDatabaseWriter):
+            await readerOrWriter.get_connection(connArgs["dbType"], connArgs["dbPath"], connArgs)
         else:
-            await reader.get_client(connArgs)
+            await readerOrWriter.get_client(connArgs)
         
         print(Fore.GREEN + "> Connection established.")
         return deepcopy(connArgs)
@@ -332,7 +348,7 @@ class CommandLineInterface():
             if objectType == "view":
                 viewTuple = next(filter(lambda obj: obj[1] == objectName, availableObjects), None)
                 if not all(originalTableOrView in selectedTablesOrCollections + selectedObjectNames for originalTableOrView in viewTuple[2]):
-                    print(Fore.RED + f"\n> {objectType.capitalize()} '{objectName}' cannot be selected for conversion, since at least one of the tables/views it depends on has not yet been selected.\n")
+                    print(Fore.RED + f"\n> {objectType.capitalize()} '{objectName}' cannot be selected for conversion, since at least one of the tables/collections/views it depends on has not yet been selected.\n")
                     continue
             
             if objectName:
