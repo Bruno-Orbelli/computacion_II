@@ -1,18 +1,22 @@
 from asyncio import Queue, StreamReader, StreamWriter, Task, TimeoutError, create_task, run, gather, open_connection, wait_for
 from pickle import dumps, loads
-from sys import getsizeof
+from sys import getsizeof, path
 from os import getenv
 from dotenv import load_dotenv
 
-from exceptions import ConnectionError, InitializationError
+try:
+    path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+except ValueError:
+    path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+
+from common.exceptions import ConnectionError, InitializationError
 
 class ClientDataSenderAndReceiver():
 
     def __init__(self) -> None:
         load_dotenv()
-        
-        self.serverIP = ("SERVER_IP_ADDRESS", getenv("SERVER_IP_ADDRESS"))
-        self.serverPort = ("SERVER_PORT", getenv("SERVER_PORT"))
+        self.serverIPV4 = ("SERVER_IPV4_ADDRESS", getenv("SERVER_IPV4_ADDRESS"))
+        self.serverIPV4Port = ("SERVER_IPV4_PORT", getenv("SERVER_IPV4_PORT"))
         self.serverConnTimeout = ("SERVER_CONNECTION_TIMEOUT", getenv("SERVER_CONNECTION_TIMEOUT"))
         self.serverResponseTimeout = ("SERVER_RESPONSE_TIMEOUT", getenv("SERVER_RESPONSE_TIMEOUT"))
 

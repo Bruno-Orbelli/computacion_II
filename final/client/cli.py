@@ -5,6 +5,7 @@ from re import fullmatch, search, split as resplit
 from argparse import ArgumentParser, Namespace
 from getpass import getpass
 from copy import deepcopy
+from sys import path
 
 import tqdm
 from colorama import Fore, Back, Style, init
@@ -14,7 +15,13 @@ from typing import Literal
 
 from asyncReader import SQLDatabaseReader, MongoDatabaseReader
 from asyncWriter import SQLDatabaseWriter, MongoDatabaseWriter
-from exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError
+
+try:
+    path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+except ValueError:
+    path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+
+from common.exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError
 
 class CommandLineInterface():
 

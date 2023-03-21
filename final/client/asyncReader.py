@@ -2,10 +2,16 @@ import pyodbc, pymongo
 from subprocess import Popen, PIPE
 from asyncio import Future, create_task, gather, run
 from re import findall
+from sys import path
 
-from queries import SQLDbStructureQueries, SQLObjectsNameQueries, SQLDataQueries, SQLViewQueries, SQLIndexQueries, mongodbAvailableQueryElems
-from connectionData import drivers, connStrs
-from exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError
+try:
+    path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+except ValueError:
+    path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    
+from common.queries import SQLDbStructureQueries, SQLObjectsNameQueries, SQLDataQueries, SQLViewQueries, SQLIndexQueries, mongodbAvailableQueryElems
+from common.connectionData import drivers, connStrs
+from common.exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError
 
 # SQL
 
