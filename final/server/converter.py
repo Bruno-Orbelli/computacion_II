@@ -1,4 +1,4 @@
-from multiprocessing import Queue
+from asyncio import Queue
 
 class Converter():
     
@@ -6,6 +6,10 @@ class Converter():
         pass
     
     async def process_requests_in_queue(self, pendingRequestsQueue: Queue, processedRequestsQueue: Queue):
-        requestToProcess = pendingRequestsQueue.get()
-        processedRequestsQueue.put("MOCK ANSWER")
-        print(processedRequestsQueue.empty())
+        requestToProcess = await pendingRequestsQueue.get()
+        await processedRequestsQueue.put({
+            "id": requestToProcess["id"],
+            "originDbType": requestToProcess["originDbType"],
+            "convertTo": requestToProcess["convertTo"],
+            "data": "mockanswer"
+            })

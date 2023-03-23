@@ -1,9 +1,7 @@
-from asyncio import StreamReader, StreamWriter, Task, create_task, run, gather, open_connection, wait_for, start_server
+from asyncio import StreamReader, StreamWriter, Queue, create_task, run, gather, open_connection, wait_for, start_server
 from pickle import dumps, loads
 from sys import getsizeof, path
 from os import getenv
-from json import loads as fromjson
-from multiprocessing import Queue
 from dotenv import load_dotenv
 
 try:
@@ -39,6 +37,7 @@ class ServerDataSenderAndReceiver():
     
     def get_prefix_from_table(self, clientIP: str) -> str:
         if not self.clientPrefixTable:
+            self.clientPrefixTable.update({clientIP: 1})
             return 1
         
         elif clientIP in self.clientPrefixTable:
@@ -59,18 +58,31 @@ class ServerDataSenderAndReceiver():
     def remove_prefix_from_table(self, clientIP: str) -> None:
         self.clientPrefixTable.pop(clientIP)
     
-    def add_request_to_queue(self, request: 'dict[str, str | int]', clientAddress: tuple) -> None:
+    async def add_request_to_queue(self, request: 'dict[str, str | int]', clientAddress: tuple) -> None:
         clientPrefix = self.get_prefix_from_table(clientAddress[0])
         request["id"] = f"{clientPrefix}{clientAddress[1]}-{request['id']}"
-        self.awaitingRequests.put(request)
+        await self.awaitingRequests.put(request)
     
-    async def read_conversion_request(self, reader: StreamReader, clientAddress: str):
-        rawRequest = await reader.readline()
-        request = loads(rawRequest) 
-        self.add_request_to_queue(request, clientAddress)
+    async def read_conversion_request(self, reader: StreamReader, clientAddress: str) -> bool:
+        rawRequestPackets = []
+            
+        while True:
+            requestPacket = await reader.read(1024)
+            rawRequestPackets.append(requestPacket)
+            
+            if str(requestPacket)[-5:-1:] == "\\n\\n":
+                return True
+
+            elif str(requestPacket)[-3:-1:] == "\\n":
+                break
+                
+        request = loads(b''.join(rawRequestPackets)) 
+        await self.add_request_to_queue(request, clientAddress)
+        
+        return False
     
     async def send_converted_response(self, writer: StreamWriter):
-        processedRequest = fromjson(self.toSendQueue.get())
+        processedRequest = await self.toSendQueue.get()
         processedRequest["id"] = processedRequest["id"].split("-")[1]
         pickledResponse = dumps(processedRequest)
         
@@ -82,10 +94,11 @@ class ServerDataSenderAndReceiver():
     async def handle_conversion_requests(self, reader: StreamReader, writer: StreamWriter) -> None:
         clientAddress = writer.get_extra_info("peername")  # A ser usado en el log
         dbConverter = Converter()
+        endOfTransmission = False
 
-        while True:            
+        while not endOfTransmission:            
             try:
-                await self.read_conversion_request(reader, clientAddress)
+                endOfTransmission = await self.read_conversion_request(reader, clientAddress)
                 await dbConverter.process_requests_in_queue(self.awaitingRequests, self.toSendQueue)
                 await self.send_converted_response(writer)
                     
@@ -93,6 +106,8 @@ class ServerDataSenderAndReceiver():
                 dbConverter.remove_zombie_requests(self.clientPrefixTable[clientAddress[0]] + clientAddress[1])
                 self.remove_prefix_from_table(clientAddress[0])
                 return
+        
+        return
     
     async def start_and_serve(self) -> None:       
         while True:
@@ -108,8 +123,8 @@ class ServerDataSenderAndReceiver():
                     await server.serve_forever()
                     break
                 
-                except: # Cachear posibles errores
-                    print("error")
+                except Exception as e: # Cachear posibles errores
+                    print(e)
                     exit(1)
 
 async def test_func():
