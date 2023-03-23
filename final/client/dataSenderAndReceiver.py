@@ -52,7 +52,6 @@ class ClientDataSenderAndReceiver():
             await self.send_conversion_request(writer, request)
             responses.append(await self.receive_conversion_response(reader))
         
-        await self.write_end_of_transmission(writer)
         writer.close()
         await writer.wait_closed()
         return responses
@@ -79,10 +78,6 @@ class ClientDataSenderAndReceiver():
         await writer.drain()
         
         # Agregar una opción de retry?
-    
-    async def write_end_of_transmission(self, writer: StreamWriter) -> None:
-        writer.write(b'\n\n')
-        await writer.drain()
 
     async def receive_conversion_response(self, reader: StreamReader) -> dict:
         try:
