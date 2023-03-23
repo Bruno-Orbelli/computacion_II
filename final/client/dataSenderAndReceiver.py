@@ -1,7 +1,8 @@
-from asyncio import Queue, StreamReader, StreamWriter, Task, TimeoutError, create_task, run, open_connection, wait_for
+from asyncio import Queue, StreamReader, StreamWriter, Task, TimeoutError, create_task, gather, run, open_connection, wait_for
 from pickle import dumps, loads
-from sys import path
+from sys import getsizeof, path
 from os import getenv
+from time import sleep
 from dotenv import load_dotenv
 
 try:
@@ -37,10 +38,11 @@ class ClientDataSenderAndReceiver():
         self.toReceiveList = []
     
     async def connect_and_run(self) -> list:       
+        sleep(10)
         try:
             reader, writer = await wait_for(open_connection(self.serverIPV4, self.serverIPV4Port), timeout= self.serverConnTimeout)
         
-        except (ConnectionRefusedError, TimeoutError):
+        except (ConnectionRefusedError, TimeoutError, ):
             raise exceptions.ConnectionError(
                 f"Failed to connect to conversion server at '{self.serverIPV4}:{self.serverIPV4Port}'. Ensure server is up and running at that address."
                 )
@@ -52,8 +54,10 @@ class ClientDataSenderAndReceiver():
             await self.send_conversion_request(writer, request)
             responses.append(await self.receive_conversion_response(reader))
         
+        await self.write_end_of_transmission(writer)
         writer.close()
         await writer.wait_closed()
+        return responses
 
     async def add_conversion_request(self, originDbType: str, convertTo: str, data) -> None:
         self.requestID += 1
@@ -61,7 +65,7 @@ class ClientDataSenderAndReceiver():
         convReques = {
             "id": self.requestID,
             "originDbType": originDbType,
-            "converTo": convertTo,
+            "convertTo": convertTo,
             "data": data
         }
         
@@ -77,12 +81,24 @@ class ClientDataSenderAndReceiver():
         await writer.drain()
         
         # Agregar una opción de retry?
+    
+    async def write_end_of_transmission(self, writer: StreamWriter) -> None:
+        writer.write(b'\n\n')
+        await writer.drain()
 
     async def receive_conversion_response(self, reader: StreamReader) -> dict:
         try:
-            rawResponse = await reader.readline()
-            response = loads(rawResponse)
-            self.toReceiveList.remove(response["id"])
+            rawResponsePackets = []
+            
+            while True:
+                requestPacket = await reader.read(1024)
+                rawResponsePackets.append(requestPacket)
+
+                if str(requestPacket)[-3:-1:] == "\\n":
+                    break
+                
+            response = loads(b''.join(rawResponsePackets)) 
+            self.toReceiveList.remove(int(response["id"]))
 
         except (TimeoutError, EOFError) as e:
             if isinstance(e, TimeoutError):
@@ -107,8 +123,26 @@ async def test_func():
     await dataSender.add_conversion_request("mysql", "postgresql", None)
     await dataSender.add_conversion_request("mysql", "mongo", None)
     await dataSender.add_conversion_request("mongo", "sqlite3", None)
-    await dataSender.connect_and_run()
+    responses = await dataSender.connect_and_run()
+    return responses
+
+async def test_func_2():
+    dataSender2 = ClientDataSenderAndReceiver()
+    await dataSender2.add_conversion_request("mongo", "sqlite3", None)
+    await dataSender2.add_conversion_request("sqlite3", "mysql", None)
+    await dataSender2.add_conversion_request("mysql", "mongo", None)
+    await dataSender2.add_conversion_request("mongo", "postgresql", None)
+    await dataSender2.add_conversion_request("postgresql", "sqlite3", None)
+    await dataSender2.add_conversion_request("mysql", "postgresql", None)
+    await dataSender2.add_conversion_request("mysql", "mongo", None)
+    await dataSender2.add_conversion_request("mongo", "sqlite3", None)
+    responses = await dataSender2.connect_and_run()
+    return responses
+
+async def main():
+    responses = await gather(test_func(), test_func_2())
+    print(responses)
 
 if __name__ == "__main__":
-    run(test_func())
+    run(main())
 
