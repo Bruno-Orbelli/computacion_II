@@ -2,7 +2,6 @@ from asyncio import Queue, StreamReader, StreamWriter, Task, TimeoutError, creat
 from pickle import dumps, loads
 from sys import getsizeof, path
 from os import getenv
-from time import sleep
 from dotenv import load_dotenv
 
 try:
@@ -38,7 +37,6 @@ class ClientDataSenderAndReceiver():
         self.toReceiveList = []
     
     async def connect_and_run(self) -> list:       
-        sleep(10)
         try:
             reader, writer = await wait_for(open_connection(self.serverIPV4, self.serverIPV4Port), timeout= self.serverConnTimeout)
         
