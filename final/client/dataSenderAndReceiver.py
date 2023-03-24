@@ -63,7 +63,7 @@ class ClientDataSenderAndReceiver():
             "id": self.requestID,
             "originDbType": originDbType,
             "convertTo": convertTo,
-            "data": data
+            "body": data
         }
         
         await self.toSendQueue.put(convReques)
@@ -84,13 +84,15 @@ class ClientDataSenderAndReceiver():
             rawResponsePackets = []
             
             while True:
-                requestPacket = await reader.read(1024)
+                requestPacket = await wait_for(reader.read(1024), self.serverResponseTimeout)
                 rawResponsePackets.append(requestPacket)
 
                 if str(requestPacket)[-3:-1:] == "\\n":
                     break
                 
-            response = loads(b''.join(rawResponsePackets)) 
+            response = loads(b''.join(rawResponsePackets))
+            print(response)
+            print(self.toReceiveList)
             self.toReceiveList.remove(int(response["id"]))
 
         except (TimeoutError, EOFError) as e:
