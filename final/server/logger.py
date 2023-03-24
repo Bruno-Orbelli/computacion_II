@@ -2,7 +2,7 @@ from asyncio import Queue
 
 class ServerLogger():
     
-    def __init__(self, logPath: str = "../log.txt", errLogPath: str = "../err.txt") -> None:
+    def __init__(self, logPath: str = "./log.txt", errLogPath: str = "./err.txt") -> None:
         self.logPath = logPath
         self.errLogPath = errLogPath
         

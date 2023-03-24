@@ -1,4 +1,4 @@
-from asyncio import StreamReader, StreamWriter, Queue, create_task, run, gather, open_connection, wait_for, start_server
+from asyncio import StreamReader, StreamWriter, Queue, create_task, run, gather, open_connection, wait, wait_for, start_server, FIRST_EXCEPTION
 from pickle import dumps, loads
 from sys import getsizeof, path
 from datetime import datetime
@@ -40,6 +40,12 @@ class ServerDataSenderAndReceiver():
 
         self.logger = ServerLogger()
     
+    def get_ip(self) -> str:
+        return self.serverIPV4
+    
+    def get_port(self) -> int:
+        return self.serverIPV4Port
+    
     async def add_loggable_event_to_queue(self, datetime: datetime, typeOfEntry: str, message: str, context: dict):
         await self.logger.add_event_to_queue((datetime, typeOfEntry, message, context))
     
@@ -72,44 +78,58 @@ class ServerDataSenderAndReceiver():
     def remove_prefix_from_table(self, clientIP: str) -> None:
         self.clientPrefixTable.pop(clientIP)
     
-    async def add_request_to_queue(self, request: 'dict[str, str | int]', userID: str) -> None:
-        await self.add_loggable_event_to_queue(datetime.now(), "INFO", "User sucesfully connected to server", {"userID": userID})
-        
+    async def add_request_to_queue(self, request: 'dict[str, str | int]', userID: str) -> None:      
         request["id"] = f"{userID}-{request['id']}"
-        await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Succesfully received request", {
-            "requestID": request["id"], 
-            "requestSize": getsizeof(request), 
-            "originDBType": request["originDbType"],
-            "convertTo": request["convertTo"]
-            })
+        if request["id"] != "None-None":
+            await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Succesfully received request", {
+                "requestID": request["id"], 
+                "requestSize": f"{getsizeof(request)}B", 
+                "originDBType": request["originDbType"],
+                "convertTo": request["convertTo"]
+                })
         
         await self.awaitingRequests.put(request)
     
-    async def read_conversion_request(self, reader: StreamReader, clientAddress: str) -> bool:
+    async def read_conversion_request(self, reader: StreamReader, userID: str) -> bool:
         rawRequestPackets = []
             
         while True:
             requestPacket = await reader.read(1024)
             rawRequestPackets.append(requestPacket)
             
+            print(str(requestPacket))
+            
             if str(requestPacket) == "b''":
+                await self.add_request_to_queue(
+                    {"id": None,
+                     "originDbType": None,
+                     "convertTo": None,
+                     "body": "EOT"
+                    },
+                    None
+                )
                 return True
 
             elif str(requestPacket)[-3:-1:] == "\\n":
                 break
                 
         request = loads(b''.join(rawRequestPackets))
-        await self.add_request_to_queue(request, clientAddress)
+        await self.add_request_to_queue(request, userID)
         
         return False
     
     async def process_request(self, dbConverter: Converter) -> None:
         processingEvent, timeTaken = await dbConverter.process_requests_in_queue(self.awaitingRequests, self.toSendQueue)
-        processingEvent[3].update({"timeTaken": f"{timeTaken * 10**3:.03f}ms"})
-        await self.add_loggable_event_to_queue(*processingEvent)
+        if processingEvent is not None:
+            processingEvent[3].update({"timeTaken": f"{timeTaken * 10**3:.03f}ms"})
+            await self.add_loggable_event_to_queue(*processingEvent)
     
     async def send_converted_response(self, writer: StreamWriter, userID: str) -> None:
         processedRequest = await self.toSendQueue.get()
+
+        if processedRequest["body"] == "EOT":
+            return
+        
         serverInternalID = processedRequest["id"]
         processedRequest["id"] = serverInternalID.split("-")[1]
         pickledResponse = dumps(processedRequest)
@@ -119,26 +139,23 @@ class ServerDataSenderAndReceiver():
         writer.write(b"\n")
         await writer.drain()
 
-        await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Sucesfully sent request response", {"userID": userID, "responseSize": getsizeof(processedRequest), "requestID": serverInternalID})
+        await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Sucesfully sent request response", {"requestID": serverInternalID, "responseSize": f"{getsizeof(processedRequest)}B"})
     
     async def handle_conversion_requests(self, reader: StreamReader, writer: StreamWriter) -> None:
         clientAddress = writer.get_extra_info("peername")
         clientPrefix = await self.get_prefix_from_table(clientAddress[0])
-        userID = f"{clientPrefix}{clientAddress[1]}"  # A ser usado en el log
+        userID = f"{clientPrefix}{clientAddress[1]}"
+        await self.add_loggable_event_to_queue(datetime.now(), "INFO", "User sucesfully connected to server", {"userID": userID})
         
         dbConverter = Converter()
         endOfTransmission = False
         
         while not endOfTransmission:            
             try:
-                results = await gather(*[
-                    self.read_conversion_request(reader, userID),
-                    self.process_request(dbConverter),
-                    self.send_converted_response(writer, userID)
-                ])
-                print(results)
-                endOfTransmission = results[0]
-                    
+                endOfTransmission = await self.read_conversion_request(reader, userID)
+                await self.process_request(dbConverter)
+                await self.send_converted_response(writer, userID)
+
             except (EOFError, ConnectionResetError):
                 await self.add_loggable_event_to_queue(datetime.now(), "ERR", "Unexpectedly lost connection with user", {"userID": userID})
                 # dbConverter.remove_zombie_requests(self.clientPrefixTable[clientAddress[0]] + clientAddress[1])
@@ -146,10 +163,8 @@ class ServerDataSenderAndReceiver():
                 break
         
         else:
-            print("here")
             await self.add_loggable_event_to_queue(datetime.now(), "INFO", "User has ended connection with server", {"userID": userID})
         
-        print("END OF TRANSMISSION")
         await self.log_pending_events()
         return
     
@@ -165,37 +180,42 @@ class ServerDataSenderAndReceiver():
                 await self.log_pending_events()
                 continue
             
-            try:
-                async with server:
-                    await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Server is up and running", {"serverAddress": (self.serverIPV4, self.serverIPV4Port)})
-                    await self.log_pending_events()
-                    await server.serve_forever()
-                    break
-                
-            except Exception as e: # Cachear posibles errores
-                if isinstance(e, KeyboardInterrupt):
-                    await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Server shutdown with KeyboardInterrupt", {"serverAddress": (self.serverIPV4, self.serverIPV4Port)})
-                    await self.log_pending_events()
-                    exit(0)
-                    
-                else:
-                    await self.add_loggable_event_to_queue(datetime.now(), "FATAL", "An unexpected error has forced server to shutdown", {"serverAddress": (self.serverIPV4, self.serverIPV4Port), "excpType": type(e), "excpMsg": e})
-                    await self.log_pending_events()
-                    exit(1)
+            async with server:
+                await gather(
+                    self.add_loggable_event_to_queue(datetime.now(), "INFO", "Server is up and running", {"serverAddress": (self.serverIPV4, self.serverIPV4Port)}),
+                    self.log_pending_events(),
+                    server.serve_forever()
+                    )
 
-async def test_func():
+async def main():
     try:
         server = ServerDataSenderAndReceiver()
-        startAndServeTask = create_task(server.start_and_serve())
-        await startAndServeTask
-        startAndServeTask.exception()
+        await server.start_and_serve()
     
-    except InitializationError as e:
+    except Exception as e:
         externalLogger = ServerLogger()
-        await externalLogger.add_event_to_queue((datetime.now(), "FATAL", "A configuration error has prevented server from starting", {"excpType": type(e), "excpMsg": e}))
+        
+        if isinstance(e, InitializationError):
+            await externalLogger.add_event_to_queue((datetime.now(), "FATAL", "A configuration error has prevented server from starting", {"excpType": type(e), "excpMsg": e}))
+            await externalLogger.log_events()
+        
+        else:
+            await externalLogger.add_event_to_queue((datetime.now(), "FATAL", "An unexpected error has forced server to shutdown", {"excpType": type(e), "excpMsg": e}))
+            await externalLogger.log_events()
+
         exit(1)
 
+async def on_close(e: 'Exception'):
+    externalLogger = ServerLogger()
+    await externalLogger.add_event_to_queue((datetime.now(), "INFO", "Server shutdown with KeyboardInterrupt", {}))
+    await externalLogger.log_events() 
+
 if __name__ == "__main__":
-    run(test_func())
+    try:
+        run(main())
+    
+    except KeyboardInterrupt as e:
+        run(on_close(e))
+        exit(0)
     
 

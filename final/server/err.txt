@@ -1,0 +1,5 @@
+[2023-03-23 20:45:15.208460] FATAL: A configuration error has prevented server from starting {'excpType': <class 'common.exceptions.InitializationError'>, 'excpMsg': InitializationError("Could not read environment variable SERVER_IPV4_ADDRESS. Check for any modifications in '.env'.")}.
+[2023-03-23 20:46:38.832051] FATAL: A configuration error has prevented server from starting {'excpType': <class 'common.exceptions.InitializationError'>, 'excpMsg': InitializationError("Could not read environment variable SERVER_IPV4_ADDRESS. Check for any modifications in '.env'.")}.
+[2023-03-23 21:05:52.422862] FATAL: An unexpected error has forced server to shutdown {'serverAddress': ('localhost', 20111), 'excpType': <class 'TypeError'>, 'excpMsg': TypeError('An asyncio.Future, a coroutine or an awaitable is required')}.
+[2023-03-23 21:07:01.696387] FATAL: An unexpected error has forced server to shutdown {'serverAddress': ('localhost', 20111), 'excpType': <class 'TypeError'>, 'excpMsg': TypeError('expect a list of futures, not Task')}.
+[2023-03-23 21:23:10.820971] ERR: Unexpectedly lost connection with user {'userID': '156236'}.

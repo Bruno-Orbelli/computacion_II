@@ -17,11 +17,21 @@ class Converter():
     @time_excecution
     async def process_requests_in_queue(self, pendingRequestsQueue: Queue, processedRequestsQueue: Queue):
         requestToProcess = await pendingRequestsQueue.get()
+        
+        if requestToProcess["body"] == "EOT":
+            await processedRequestsQueue.put({
+                "id": None,
+                "originDbType": None,
+                "convertTo": None,
+                "body": "EOT"
+            })
+            return None
+        
         await processedRequestsQueue.put({
             "id": requestToProcess["id"],
             "originDbType": requestToProcess["originDbType"],
             "convertTo": requestToProcess["convertTo"],
-            "data": "mockanswer"
+            "body": "mockanswer"
             })
         
         return [datetime.now(), "INFO", "Request succesfully processed", {"requestID": requestToProcess["id"]}]
