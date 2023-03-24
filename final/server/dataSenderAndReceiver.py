@@ -1,4 +1,4 @@
-from asyncio import StreamReader, StreamWriter, Queue, create_task, run, gather, open_connection, wait, wait_for, start_server, FIRST_EXCEPTION
+from asyncio import StreamReader, StreamWriter, Queue, run, gather, start_server
 from pickle import dumps, loads
 from sys import getsizeof, path
 from datetime import datetime
@@ -96,8 +96,6 @@ class ServerDataSenderAndReceiver():
         while True:
             requestPacket = await reader.read(1024)
             rawRequestPackets.append(requestPacket)
-            
-            print(str(requestPacket))
             
             if str(requestPacket) == "b''":
                 await self.add_request_to_queue(
