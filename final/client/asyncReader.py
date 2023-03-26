@@ -184,14 +184,16 @@ class SQLDatabaseReader():
             ]
         return tasks
 
-    async def get_postgresql_structure(self, connectionParams: dict, tableName: str) -> str:
+    async def get_postgresql_table_structure(self, connectionParams: dict, tableName: str) -> str:
         # Escribir guia de uso para POSTGRESQL (set en modo TRUST)
         process = Popen(f"pg_dump -U {connectionParams['user']} -t 'public.{tableName}' --schema-only {connectionParams['dbName']}", stdout= PIPE, stderr= PIPE, shell= True)
         if process.communicate()[1]:
             raise ConnectionError(
                 "Failed to retrieve PostgreSQL database's schema, check for any incorrect arguments or enable TRUST authentication in 'pg_hba.conf'."
                 )
-        return str(process.communicate()[0])
+        fullStructure = str(process.communicate()[0])
+        tableSQL = findall(r'\\n\\n--\\n-- Name: [\w\s]*; Type: (TABLE|CONSTRAINT); Schema: public; Owner: [\w\s]*\\n--\\n\\n([\S\s]*?\);)', fullStructure)
+        return '\\n\\n'.join(sqlTuple[1] for sqlTuple in tableSQL)
 
     async def run_query_and_get_result(self, query: str, cursor, *params) -> list:    
         try:
@@ -216,7 +218,7 @@ class SQLDatabaseReader():
                 structQuery = SQLDbStructureQueries[dbType].format(tableName)
                 tableSQL = await self.run_query_and_get_result(structQuery, cursor)
             else:
-                tableSQL = await self.get_postgresql_structure(connectionParams, tableName)
+                tableSQL = await self.get_postgresql_table_structure(connectionParams, tableName)
             
             dataQuery = SQLDataQueries[dbType].format(tableName)
             
@@ -486,7 +488,7 @@ class MongoDatabaseReader():
 if __name__ == "__main__":
     mongoReader = MongoDatabaseReader()
     sqlReader = SQLDatabaseReader()
-    print(run(sqlReader.connect_and_get_objects_description("sqlite3", "/home/brunengo/Escritorio/Proshecto/northwind.db", {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306})))
+    print(run(sqlReader.connect_and_read_data("postgresql", None, {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, ("table", {"actor": None}))))
     
     '''print(run(sqlReader.sql_connect_and_read(
         dbType= "sqlite3", 
