@@ -1,6 +1,7 @@
 from celery import Celery
 from typing import Literal, Any
 from re import findall, match, search, split, sub
+from anytree import Node, LevelOrderIter
 
 app = Celery("funcs", broker="redis://localhost", backend="redis://localhost:6379")
 
@@ -203,49 +204,67 @@ def adapt_non_natively_mapped_functions(originalFuncName: str, funcArgs: 'list[s
         
     return nonNativelyMappedFunctions[(originDBType, destinationDBType)][originalFuncName].format(*funcArgs)
 
-def extract_arguments(matchingFuncString: str) -> 'list[str]':
-    args = []
-    argStr = ""
-    level = 0
+def build_statement_functions_tree(rootStatement: 'str') -> Node:
+    rootStatement = rootStatement.replace(" ", "")
+    root = Node('root', args= rootStatement, maxReachedLevel= 999)
+    nodesToProcess = [root]
     
-    for char in matchingFuncString:
+    while nodesToProcess:
+        for parentNode in nodesToProcess:
+            if parentNode.maxReachedLevel > 1:
+                build_function_and_argument_nodes(parentNode.args, parentNode)
+        nodesToProcess = [nodeChild for node in nodesToProcess for nodeChild in node.children]
+    
+    return root
+
+def build_function_and_argument_nodes(funcString: str, parentNode: Node) -> None:
+    funcs, args = [], []
+    auxArgsList = []
+    tokenStr = ""
+    level, maxReachedLevel = 0, 0
+    
+    for char in funcString:
+        if level >= maxReachedLevel:
+            maxReachedLevel = level
+        
         if char == '(':
+            if level == 0:
+                funcs.append([tokenStr])
+                tokenStr = ""
+            
             level += 1
+            
             if level == 1:
                 continue
         
         elif char == ')':
             level -= 1
             if level == 0:
-                args.append(argStr)
-                argStr = ""
+                auxArgsList.append(tokenStr)
+                args.append(auxArgsList)
+                tokenStr, auxArgsList = "", []
                 continue
         
         elif char == ',':
             if level == 1:
-                args.append(argStr)
-                argStr = ""
+                auxArgsList.append(tokenStr)
+                tokenStr = ""
+                continue
+
+            elif level == 0:
+                tokenStr = ""
                 continue
         
-        argStr += char
+        tokenStr += char
+        
+    i = 0
+    for func, argList in zip(funcs, args):
+        newNode = Node(name= f'{parentNode.name}{i}', parent= parentNode, function= func[0], args= ','.join(arg for arg in argList), maxReachedLevel= maxReachedLevel, adaptation=None)
+        i += 1
 
-    return args
-
-def get_function_matches(funcString: str):       
-    levelZeroFuncPattern = r'(?<!\w)(\w+)\s*(?=\((?:(?P<1>)|[^()])*\)\s*(?:(?<!\w)[+*/-]|\b))'
-    levelZeroFuncMatches = findall(levelZeroFuncPattern, funcString.replace(" ", ""))
+def divide_statement_in_functions(funcString: str):
+    pass
     
-    argsPattern = r'\b\w+(\((?:[^()]*|\((?:[^()]*|\([^()]*\))*\))*\))'
-    argMaches = findall(argsPattern, funcString.replace(" ", ""))
-    
-    print(levelZeroFuncMatches, argMaches)
-
-    funcWithArgs = []
-    
-    for func, args in zip(levelZeroFuncMatches, argMaches):
-        funcWithArgs.extend([func, extract_arguments(args)])
-    
-    return funcWithArgs
 
 @app.task
 def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str = None):   
@@ -261,7 +280,11 @@ def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType
     
     for originalName, destinationName in nativelyMappedFunctions.items():
         createStatement = sub(originalName, destinationName, createStatement)
-    
+
+    funcTree = build_statement_functions_tree(createStatement)
+    for funcNode in reversed([node for node in LevelOrderIter(funcTree)]):
+        funcNode.adaptation = 
+
     return createStatement
         
 @app.task
@@ -273,5 +296,7 @@ def convertNoSQLtoSQL(data, originType, destinationType):
     pass
 
 if __name__ == "__main__":
-    print(get_function_matches('ATAN(ATAN(3, ATAN(2, 3)), LOG(2)) COS(COS(3))'))
-    #app.start()
+    
+    #build_statement_functions_tree('ATAN(ATAN(3, ATAN(2, ATAN(2,ATAN(3, 2)))), LOG(2)) + COS(COS(3))')
+    #print(extract_arguments_and_functions('ATAN(ATAN(3, ATAN(2, 3)), LOG(2)) COS(COS(3))'))
+    app.start()
