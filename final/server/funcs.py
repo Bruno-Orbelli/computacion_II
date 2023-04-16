@@ -1,6 +1,6 @@
 from celery import Celery
 from typing import Literal, Any
-from re import sub
+from re import findall, match, search, split, sub
 
 app = Celery("funcs", broker="redis://localhost", backend="redis://localhost:6379")
 
@@ -194,6 +194,58 @@ def adapt_non_natively_mapped_functions(originalFuncName: str, funcArgs: 'list[s
             "SCHEMA": "WITH RECURSIVE get_db_name(path, amount_of_previous_char) AS (SELECT (SELECT file FROM pragma_database_list), 1 UNION ALL SELECT substr(path, instr(path, '/') + 1), instr(path, '/') FROM get_db_name WHERE amount_of_previous_char > 0) SELECT substr(path, 0, instr(path, '.')) FROM get_db_name WHERE amount_of_previous_char = 0"
         }
     }
+    
+    for i, argument in enumerate(funcArgs):
+        funcName = match(r"(\w+)(\(| )", argument).group(1)
+        
+        if funcName in nonNativelyMappedFunctions[(originDBType, destinationDBType)]:
+            funcArgs[i] = adapt_non_natively_mapped_functions(funcName, extract_arguments(argument), originDBType, destinationDBType)
+        
+    return nonNativelyMappedFunctions[(originDBType, destinationDBType)][originalFuncName].format(*funcArgs)
+
+def extract_arguments(matchingFuncString: str) -> 'list[str]':
+    args = []
+    argStr = ""
+    level = 0
+    
+    for char in matchingFuncString:
+        if char == '(':
+            level += 1
+            if level == 1:
+                continue
+        
+        elif char == ')':
+            level -= 1
+            if level == 0:
+                args.append(argStr)
+                argStr = ""
+                continue
+        
+        elif char == ',':
+            if level == 1:
+                args.append(argStr)
+                argStr = ""
+                continue
+        
+        argStr += char
+
+    return args
+
+def get_function_matches(funcString: str):       
+    levelZeroFuncPattern = r'(?<!\w)(\w+)\s*(?=\((?:(?P<1>)|[^()])*\)\s*(?:(?<!\w)[+*/-]|\b))'
+    levelZeroFuncMatches = findall(levelZeroFuncPattern, funcString.replace(" ", ""))
+    
+    argsPattern = r'\b\w+(\((?:[^()]*|\((?:[^()]*|\([^()]*\))*\))*\))'
+    argMaches = findall(argsPattern, funcString.replace(" ", ""))
+    
+    print(levelZeroFuncMatches, argMaches)
+
+    funcWithArgs = []
+    
+    for func, args in zip(levelZeroFuncMatches, argMaches):
+        funcWithArgs.extend([func, extract_arguments(args)])
+    
+    return funcWithArgs
 
 @app.task
 def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str = None):   
@@ -221,4 +273,5 @@ def convertNoSQLtoSQL(data, originType, destinationType):
     pass
 
 if __name__ == "__main__":
-    app.start()
+    print(get_function_matches('ATAN(ATAN(3, ATAN(2, 3)), LOG(2)) COS(COS(3))'))
+    #app.start()
