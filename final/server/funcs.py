@@ -1,7 +1,7 @@
 from celery import Celery
 from typing import Literal, Any
-from re import findall, match, search, split, sub
-from anytree import Node, LevelOrderIter
+from re import findall, fullmatch, match, search, split, sub, subn
+from anytree import Node, LevelOrderGroupIter, RenderTree
 
 app = Celery("funcs", broker="redis://localhost", backend="redis://localhost:6379")
 
@@ -30,78 +30,71 @@ def get_syntax_substitutions(originDBType: Literal["mysql", "sqlite3", "postgres
     }
     return subsDict[(originDBType, destinationDBType)]
 
-def get_natively_mapped_functions(originDBType: Literal["mysql", "sqlite3", "postgresql", "mongodb"], destinationDBType: Literal["mysql", "sqlite3", "postgresql", "mongodb"], params: 'dict[str, str]'):
+def get_natively_mapped_functions(originDBType: Literal["mysql", "sqlite3", "postgresql", "mongodb"], destinationDBType: Literal["mysql", "sqlite3", "postgresql", "mongodb"]):
     nativelyMappedFunctions = {
         ("mysql", "sqlite3") : {
-            "withSameName": {
-                "ABS": "abs",
-                "AVG": "avg",
-                "CAST": "cast",
-                "CHAR": "char",
-                "COUNT": "count",
-                "DATE": "date",
-                "IFNULL": "ifnull",
-                "INSTR": "instr",
-                "LENGTH": "length",
-                "LOWER": "lower",
-                "LTRIM": "ltrim",
-                "NULLIF": "nullif",
-                "JSON_ARRAY": "json_array",
-                "MAX": "max",
-                "MIN": "min",
-                "REGEXP": "regexp",
-                "REPLACE": "replace",
-                "ROUND": "round",
-                "RTRIM": "rtrim",
-                "SIGN": "sign",
-                "SUM": "sum",
-                "TIME": "time",
-                "UPPER": "upper",
-            },
-            "withDifferentName": {
-                "ASCII": "unicode",
-                "CHAR_LENGTH": "length",
-                "CHARACTER_LENGTH": "length",
-                "DIV": "/",
-                "LAST_INSERT_ID": "last_insert_rowid",
-                "LCASE": "lower",
-                "JSON_ARRAYAGG": "json_group_array",
-                "JSON_OBJECTAGG": "json_group_object",
-                "MOD": "%",
-                "OCTET_LENGTH": "length",
-                "RLIKE": "regexp",
-                "ROW_COUNT": "changes",
-                "UCASE": "upper",
-                "VERSION": "sqlite_version"
-            },
-            "mathWithSameName": {
-                "ACOS": "acos",
-                "ASIN": "asin",
-                "ATAN2": "atan2",
-                "CEIL": "ceil",
-                "CEILING": "ceiling",
-                "COS": "cos",
-                "DEGREES": "degrees",
-                "EXP": "exp",
-                "FLOOR": "floor",
-                "LN": "ln",
-                "LOG2": "log2",
-                "LOG10": "log10",
-                "MOD": "mod",
-                "PI": "pi",
-                "POW": "pow",
-                "POWER": "power",
-                "RADIANS": "radians",
-                "SIN": "sin",
-                "SQRT": "sqrt",
-                "TAN": "tan"
-            }
+            "ABS": "ABS({0})",
+            "AVG": "AVG({0})",
+            "CAST": "CAST({0} AS {1})",
+            "CHAR": "CHAR({0})",
+            "COUNT": "COUNT({0})",
+            "DATE": "DATE({0})",
+            "IFNULL": "IFNULL({0}, {1})",
+            "INSTR": "INSTR({0}, {1})",
+            "LENGTH": "LENGTH({0})",
+            "LOWER": "LOWER({0})",
+            "LTRIM": "LTRIM({0})",
+            "NULLIF": "NULLIF({0}, {1})",
+            "JSON_ARRAY": "JSON_ARRAY({concatOfArgs})",
+            "MAX": "MAX({0})",
+            "MIN": "MIN({0})",
+            "REGEXP": "{0} REGEXP {1}",
+            "REPLACE": "REPLACE({0}, {1}, {2})",
+            "ROUND": "ROUND({0})",
+            "RTRIM": "RTRIM({0})",
+            "SIGN": "SIGN({0})",
+            "SUM": "SUM({0})",
+            "TIME": "TIME({0})",
+            "UPPER": "UPPER({0})",
+            "ASCII": "UNICODE({0})",
+            "CHAR_LENGTH": "LENGTH({0})",
+            "CHARACTER_LENGTH": "LENGTH({0})",
+            "DIV": "{0} / {1}",
+            "LAST_INSERT_ID": "LAST_INSERT_ROWID()",
+            "LCASE": "LOWER({0})",
+            "JSON_ARRAYAGG": "JSON_GROUP_ARRAY({0})",
+            "JSON_OBJECTAGG": "JSON_GROUP_OBJECT({0}, {1})",
+            "OCTET_LENGTH": "LENGTH({0})",
+            "RLIKE": "{0} REGEXP {1}",
+            "ROW_COUNT": "CHANGES()",
+            "UCASE": "UPPER({0})",
+            "VERSION": "SQLITE_VERSION()",
+            "ACOS": "ACOS({0})",
+            "ASIN": "ASIN({0})",
+            "ATAN2": "ATAN2({0}, {1})",
+            "CEIL": "CEIL({0})",
+            "CEILING": "CEILING({0})",
+            "COS": "COS({0})",
+            "DEGREES": "DEGREES({0})",
+            "EXP": "EXP({0})",
+            "FLOOR": "FLOOR({0})",
+            "LN": "LN({0})",
+            "LOG2": "LOG2({0})",
+            "LOG10": "LOG10({0})",
+            "MOD": "{0} % {1}",
+            "PI": "PI()",
+            "POW": "POW({0}, {1})",
+            "POWER": "POWER({0}, {1})",
+            "RADIANS": "RADIANS({0})",
+            "SIN": "SIN({0})",
+            "SQRT": "SQRT({0})",
+            "TAN": "TAN({0})"
         }
     }
 
-    return nativelyMappedFunctions[(originDBType, destinationDBType)]["withDifferentName"]
+    return nativelyMappedFunctions[(originDBType, destinationDBType)]
 
-def adapt_non_natively_mapped_functions(originalFuncName: str, funcArgs: 'list[str]', originDBType: Literal["mysql", "sqlite3", "postgresql", "mongodb"], destinationDBType: Literal["mysql", "sqlite3", "postgresql", "mongodb"]):
+def get_non_natively_mapped_functions(originDBType: Literal["mysql", "sqlite3", "postgresql", "mongodb"], destinationDBType: Literal["mysql", "sqlite3", "postgresql", "mongodb"]) -> 'dict[str, str]':
     nonNativelyMappedFunctions = {
         ("mysql", "sqlite3"): {
             "ATAN": ("ATAN({0} / {1})", "ATAN({0})"),
@@ -195,24 +188,40 @@ def adapt_non_natively_mapped_functions(originalFuncName: str, funcArgs: 'list[s
             "SCHEMA": "WITH RECURSIVE get_db_name(path, amount_of_previous_char) AS (SELECT (SELECT file FROM pragma_database_list), 1 UNION ALL SELECT substr(path, instr(path, '/') + 1), instr(path, '/') FROM get_db_name WHERE amount_of_previous_char > 0) SELECT substr(path, 0, instr(path, '.')) FROM get_db_name WHERE amount_of_previous_char = 0"
         }
     }
+
+    return nonNativelyMappedFunctions[(originDBType, destinationDBType)]
+           
+def map_native_and_non_native_functions(originalFuncName: str, funcArgs: 'list[str]', originDBType: Literal["mysql", "sqlite3", "postgresql", "mongodb"], destinationDBType: Literal["mysql", "sqlite3", "postgresql", "mongodb"]):
+    nativelyMappedFunctions = get_natively_mapped_functions(originDBType, destinationDBType)
+    nonNativelyMappedFunctions = get_non_natively_mapped_functions(originDBType, destinationDBType)
+   
+    correctedFunctionName = search(r'\w+', originalFuncName).group(0)
     
-    for i, argument in enumerate(funcArgs):
-        funcName = match(r"(\w+)(\(| )", argument).group(1)
+    if correctedFunctionName in nativelyMappedFunctions:
+        return nativelyMappedFunctions[correctedFunctionName].format(*funcArgs)
+    
+    elif correctedFunctionName in nonNativelyMappedFunctions:
+        mappedFunction = nonNativelyMappedFunctions[correctedFunctionName]
+        if isinstance(mappedFunction, tuple):
+            try:
+                return mappedFunction[0].format(*funcArgs)
+            except IndexError:
+                return mappedFunction[1].format(*funcArgs)
         
-        if funcName in nonNativelyMappedFunctions[(originDBType, destinationDBType)]:
-            funcArgs[i] = adapt_non_natively_mapped_functions(funcName, extract_arguments(argument), originDBType, destinationDBType)
-        
-    return nonNativelyMappedFunctions[(originDBType, destinationDBType)][originalFuncName].format(*funcArgs)
+        else:
+            return mappedFunction.format(*funcArgs)
+    
+    else:
+        return 'NULL'
 
 def build_statement_functions_tree(rootStatement: 'str') -> Node:
-    rootStatement = rootStatement.replace(" ", "")
-    root = Node('root', args= rootStatement, maxReachedLevel= 999)
+    root = Node('root', oldArgs= rootStatement.replace(" ", ""), newArgs= rootStatement.replace(" ", ""), maxReachedLevel= 999)
     nodesToProcess = [root]
     
     while nodesToProcess:
         for parentNode in nodesToProcess:
             if parentNode.maxReachedLevel > 1:
-                build_function_and_argument_nodes(parentNode.args, parentNode)
+                build_function_and_argument_nodes(parentNode.oldArgs, parentNode)
         nodesToProcess = [nodeChild for node in nodesToProcess for nodeChild in node.children]
     
     return root
@@ -251,41 +260,49 @@ def build_function_and_argument_nodes(funcString: str, parentNode: Node) -> None
                 tokenStr = ""
                 continue
 
-            elif level == 0:
+        elif char == ';':
                 tokenStr = ""
                 continue
         
+        elif fullmatch(r'\W', char):
+            continue
+
         tokenStr += char
         
     i = 0
     for func, argList in zip(funcs, args):
-        newNode = Node(name= f'{parentNode.name}{i}', parent= parentNode, function= func[0], args= ','.join(arg for arg in argList), maxReachedLevel= maxReachedLevel, adaptation=None)
+        newNode = Node(name= f'{i}', parent= parentNode, function= func[0], oldArgs= ';'.join(arg for arg in argList), newArgs= ';'.join(arg for arg in argList), maxReachedLevel= maxReachedLevel, adaptation=None)
         i += 1
-
-def divide_statement_in_functions(funcString: str):
-    pass
-    
 
 @app.task
 def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str = None):   
-          
     # Adaptar cuestiones sintácticas básicas (caracteres para delimitar literales, información adicional innecesaria, etc)
     syntaxSubstitutions = get_syntax_substitutions(originDBType, "sqlite3", {"tableName": tableName})
-
-    # Verificar qué funciones escalares y agregadas tienen su equivalente (y mapearlas) y cuáles deben quitarse del statement
-    nativelyMappedFunctions = get_natively_mapped_functions(originDBType, "sqlite3", {})
     
     for pattern, substitution in syntaxSubstitutions.items():
         createStatement = sub(pattern, substitution, createStatement)
     
-    for originalName, destinationName in nativelyMappedFunctions.items():
-        createStatement = sub(originalName, destinationName, createStatement)
-
+    # Verificar qué funciones escalares y agregadas tienen su equivalente (y mapearlas) y cuáles deben quitarse del statement
     funcTree = build_statement_functions_tree(createStatement)
-    for funcNode in reversed([node for node in LevelOrderIter(funcTree)]):
-        funcNode.adaptation = 
+    for sameLevelNodes in reversed([[node for node in children] for children in LevelOrderGroupIter(funcTree)]):
+        for funcNode in sameLevelNodes:
+            if funcNode.name != 'root':
+                funcNode.adaptation = map_native_and_non_native_functions(funcNode.function, funcNode.newArgs.split(";"), originDBType, "sqlite3")
+                parentArgs = funcNode.parent.newArgs.split(";")
+                
+                for i, arg in enumerate(parentArgs):
+                    if arg == f"{funcNode.function}({funcNode.oldArgs.replace(';', ',')})":
+                        parentArgs[i] = funcNode.adaptation
+                
+                funcNode.parent.newArgs = ';'.join(arg for arg in parentArgs)
+            
+            else:
+                for child in funcNode.children:
+                    funcNode.newArgs = funcNode.newArgs.replace(f"{child.function}({child.oldArgs.replace(';', ',')})", 
+                                                                f"{child.adaptation}")
 
-    return createStatement
+    print(RenderTree(funcTree))
+    return createStatement.replace(" ", "").replace(rf'{funcTree.oldArgs}', rf'{funcTree.newArgs}', )
         
 @app.task
 def convertSQLtoNoSQL(tableData, originType, destinationType):
