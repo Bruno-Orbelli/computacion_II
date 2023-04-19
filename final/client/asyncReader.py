@@ -80,7 +80,7 @@ class SQLDatabaseReader():
                     objectTuples = await self.run_query_and_get_result(specificQuery, cursor)
 
                     if objectType == "view":
-                        objectTuples = self.build_views_description(dbType, objectTuples, originalDbName)
+                        objectTuples = self.build_views_description(dbType, originalDbName, objectTuples)
                         
                     elif objectType == "index":
                         objectTuples = self.build_indexes_description(objectTuples)
@@ -96,7 +96,7 @@ class SQLDatabaseReader():
     
         return data            
     
-    def build_views_description(self, dbType: str, objectTuples: 'list[tuple[str]]', originalDbName: str) -> 'list[tuple[str]]':
+    def build_views_description(self, dbType: str, originalDbName: str, objectTuples: 'list[tuple[str]]') -> 'list[tuple[str]]':
         viewRegexs = {
             "sqlite3": (
                 r"(from|froM|frOm|frOM|fRom|fRoM|fROm|fROM|From|FroM|FrOm|FrOM|FRom|FRoM|FROm|FROM)\s+\[?(\w+( +\w+)*)\]?;?", 
@@ -107,12 +107,15 @@ class SQLDatabaseReader():
         }
 
         def extract_view_original_tables(viewDefinition: str):
-            viewOriginalTables = []
+            print(viewDefinition)
+            viewOriginalTables = set()
+            
             for regex in viewRegexs[dbType]:
                 regex_result = findall(regex, viewDefinition)
-                viewOriginalTables.extend(list(dict.fromkeys([regex_tuple[1].strip() for regex_tuple in regex_result] if dbType == 'sqlite3' else regex_result)))
+                print(regex_result)
+                viewOriginalTables.update([regex_tuple[1].strip() for regex_tuple in regex_result] if dbType == 'sqlite3' else regex_result)
             
-            return viewOriginalTables
+            return list(viewOriginalTables)
         
         newViewTuples = []
         for view in objectTuples:
@@ -158,7 +161,11 @@ class SQLDatabaseReader():
                 data = await gather(*tasks)
                 cursor.close()
             
-            return data
+            result = {}
+            for dataDict in data:
+                result.update(dataDict)
+            
+            return result
         
         except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
             raise e
@@ -208,8 +215,8 @@ class SQLDatabaseReader():
             else:
                 raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
         
-        return cursor.fetchall()
-
+        return cursor.fetchall()        
+    
     async def build_table_data(self, dbType: str, tableName: str, cursor, connectionParams: dict = None, limitOffset: 'tuple[int, int]' = None) -> 'dict[str, tuple[list]]':
         self.check_for_sanitized_input(dbType, tableName)
         
@@ -220,6 +227,7 @@ class SQLDatabaseReader():
             else:
                 tableSQL = await self.get_postgresql_table_structure(connectionParams, tableName)
             
+            tableSQL[0] = str(tableSQL[0])
             dataQuery = SQLDataQueries[dbType].format(tableName)
             
             if limitOffset:
@@ -229,9 +237,20 @@ class SQLDatabaseReader():
                 tableData = await self.run_query_and_get_result(dataQuery, cursor, limitOffset[0], limitOffset[1])  
             else:
                 tableData = await self.run_query_and_get_result(dataQuery, cursor)
-        
+            
             cols = tuple(await self.get_cursor_description(cursor))
             tableData.insert(0, cols)
+
+            serializableTableData = []   
+            for row in tableData:
+                newRow = list(row)
+                
+                for i, value in enumerate(newRow):
+                    if value is None:
+                        newRow[i] = 'NULL'
+                
+                newRow = str(tuple(newRow))
+                serializableTableData.append(newRow)
         
         except (ExecutionError, ConnectionError) as e:
             if isinstance(e, ConnectionError):
@@ -239,7 +258,7 @@ class SQLDatabaseReader():
             raise e
 
         return {
-            tableName: (tableData, tableSQL)
+            tableName: (serializableTableData, tableSQL)
         }
 
     async def build_view_data(self, dbType: str, viewName: str, cursor, connectionParams: dict = None) -> 'dict[str, list]':
@@ -488,7 +507,7 @@ class MongoDatabaseReader():
 if __name__ == "__main__":
     mongoReader = MongoDatabaseReader()
     sqlReader = SQLDatabaseReader()
-    print(run(sqlReader.connect_and_read_data("postgresql", None, {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, ("table", {"actor": None}))))
+    # print(run(sqlReader.connect_and_read_data("postgresql", None, {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, ("table", {"actor": None}))))
     
     '''print(run(sqlReader.sql_connect_and_read(
         dbType= "sqlite3", 
@@ -497,6 +516,9 @@ if __name__ == "__main__":
         readParams= ("table", {"Customers": None})
         )))'''
     
-    '''print(run(mongoReader.mongo_connect_and_get_objects_name(
-        connectionParams= {"user": "dbdummy", "password": "mongo", "host": "localhost", "dbName": "books", "port": 27017}
-        )))'''
+    data = run(sqlReader.connect_and_read_data("mysql", None,
+        connectionParams= {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306},
+        readParams= ("table", {"customers": (5, 2)})
+        ))
+    print(type(data))
+    print(data)

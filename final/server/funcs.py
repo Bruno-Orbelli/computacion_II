@@ -1,9 +1,17 @@
+from ast import literal_eval
+from string import punctuation
 from celery import Celery
 from typing import Literal, Any
 from re import findall, fullmatch, match, search, split, sub, subn
 from anytree import Node, LevelOrderGroupIter, RenderTree
 
-app = Celery("funcs", broker="redis://localhost", backend="redis://localhost:6379")
+app = Celery("funcs", 
+             broker="redis://localhost", 
+             backend="redis://localhost:6379", 
+             task_serializer='json',
+             result_serializer='json',
+             accept_content = ['application/json']
+             )
 
 # Probar procesamiento con unidades de diferentes tamaños (diferentes chunks)
 
@@ -130,6 +138,7 @@ def get_non_natively_mapped_functions(originDBType: Literal["mysql", "sqlite3", 
             "DAYNAME": "SELECT CASE	WHEN strftime('%w', {0}) = '0' THEN 'Sunday' WHEN strftime('%w', {0}) = '1' THEN 'Monday' WHEN strftime('%w', {0}) = '2' THEN 'Tuesday'	WHEN strftime('%w', {0}) = '3' THEN 'Wednesday'	WHEN strftime('%w', {0}) = '4' THEN 'Thursday'	WHEN strftime('%w', {0}) = '5' THEN 'Friday' WHEN strftime('%w', {0}) = '6' THEN 'Saturday' END",
             "DAYOFWEEK": r"CAST(STRFTIME('%w', {0}, '+1 day') AS INT)",
             "DAYOFYEAR": r"CAST(STRFTIME('%j', {0}) AS INT)",
+            "DECIMAL": "CAST({0} AS NUMERIC)",
             "EXTRACT": "STRFTIME({0}, {1})", # solo mapear si los especificadores están disponibles
             "FROM_DAYS": "DATE('0000-01-01', '+{0} days')",
             "FROM_UNIXTIME": "STRFTIME({0}, {1}, 'unixepoch')", # solo mapear si los especificadores están disponibles
@@ -195,8 +204,10 @@ def map_native_and_non_native_functions(originalFuncName: str, funcArgs: 'list[s
     nativelyMappedFunctions = get_natively_mapped_functions(originDBType, destinationDBType)
     nonNativelyMappedFunctions = get_non_natively_mapped_functions(originDBType, destinationDBType)
    
-    correctedFunctionName = search(r'\w+', originalFuncName).group(0)
-    
+    charsToRemove = punctuation.replace("_", "")
+    pattern = f"[{'|'.join(char for char in charsToRemove)}]"
+    correctedFunctionName = sub(r'{0}'.format(pattern), "", originalFuncName).upper()
+        
     if correctedFunctionName in nativelyMappedFunctions:
         return nativelyMappedFunctions[correctedFunctionName].format(*funcArgs)
     
@@ -215,7 +226,7 @@ def map_native_and_non_native_functions(originalFuncName: str, funcArgs: 'list[s
         return 'NULL'
 
 def build_statement_functions_tree(rootStatement: 'str') -> Node:
-    root = Node('root', oldArgs= rootStatement.replace(" ", ""), newArgs= rootStatement.replace(" ", ""), maxReachedLevel= 999)
+    root = Node('root', oldArgs= rootStatement.strip(), newArgs= rootStatement.strip(), maxReachedLevel= 999)
     nodesToProcess = [root]
     
     while nodesToProcess:
@@ -264,15 +275,37 @@ def build_function_and_argument_nodes(funcString: str, parentNode: Node) -> None
                 tokenStr = ""
                 continue
         
-        elif fullmatch(r'\W', char):
+        elif fullmatch(r'\W', char) and char not in (" ", "."):
             continue
 
         tokenStr += char
         
     i = 0
     for func, argList in zip(funcs, args):
-        newNode = Node(name= f'{i}', parent= parentNode, function= func[0], oldArgs= ';'.join(arg for arg in argList), newArgs= ';'.join(arg for arg in argList), maxReachedLevel= maxReachedLevel, adaptation=None)
+        newNode = Node(name= f'{i}', parent= parentNode, function= func[0].strip(), oldArgs= '; '.join(arg.strip() for arg in argList), newArgs= ';'.join(arg.strip() for arg in argList), maxReachedLevel= maxReachedLevel, adaptation=None)
         i += 1
+
+def adapt_functions_tree_to_sqlite3(funcTree: Node, originDBType: Literal["mysql", "postgresql", "mongodb"]) -> Node:
+    for sameLevelNodes in reversed([[node for node in children] for children in LevelOrderGroupIter(funcTree)]):
+        for funcNode in sameLevelNodes:
+            if funcNode.name != 'root':
+                funcNode.adaptation = map_native_and_non_native_functions(funcNode.function, funcNode.newArgs.split(";"), originDBType, "sqlite3")
+                parentArgs = funcNode.parent.newArgs.split(";")
+                
+                for i, arg in enumerate(parentArgs):
+                    if arg in (f"{funcNode.function}({funcNode.oldArgs.replace(';', ',')})", f"{funcNode.function}('{funcNode.oldArgs.replace(';', ',')}')"):
+                        parentArgs[i] = funcNode.adaptation
+                
+                funcNode.parent.newArgs = ';'.join(arg for arg in parentArgs)
+            
+            else:
+                for child in funcNode.children:
+                    childOldArgs = f"{child.oldArgs.replace(';', ',')}"
+                    print(f"{child.function}({childOldArgs})")
+                    funcNode.newArgs = funcNode.newArgs.replace(f"{child.function}({childOldArgs})", 
+                                                                f"{child.adaptation}")
+                
+    return funcTree
 
 @app.task
 def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str = None):   
@@ -283,37 +316,27 @@ def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType
         createStatement = sub(pattern, substitution, createStatement)
     
     # Verificar qué funciones escalares y agregadas tienen su equivalente (y mapearlas) y cuáles deben quitarse del statement
-    funcTree = build_statement_functions_tree(createStatement)
-    for sameLevelNodes in reversed([[node for node in children] for children in LevelOrderGroupIter(funcTree)]):
-        for funcNode in sameLevelNodes:
-            if funcNode.name != 'root':
-                funcNode.adaptation = map_native_and_non_native_functions(funcNode.function, funcNode.newArgs.split(";"), originDBType, "sqlite3")
-                parentArgs = funcNode.parent.newArgs.split(";")
-                
-                for i, arg in enumerate(parentArgs):
-                    if arg == f"{funcNode.function}({funcNode.oldArgs.replace(';', ',')})":
-                        parentArgs[i] = funcNode.adaptation
-                
-                funcNode.parent.newArgs = ';'.join(arg for arg in parentArgs)
-            
-            else:
-                for child in funcNode.children:
-                    funcNode.newArgs = funcNode.newArgs.replace(f"{child.function}({child.oldArgs.replace(';', ',')})", 
-                                                                f"{child.adaptation}")
+    funcTree = adapt_functions_tree_to_sqlite3(build_statement_functions_tree(createStatement), originDBType)
 
-    print(RenderTree(funcTree))
-    return createStatement.replace(" ", "").replace(rf'{funcTree.oldArgs}', rf'{funcTree.newArgs}', )
+    return createStatement.replace(rf'{funcTree.oldArgs}', rf'{funcTree.newArgs}', )
         
-@app.task
-def convertSQLtoNoSQL(tableData, originType, destinationType):
-    pass
+@app.task()
+def create_table_insert_statement_for_sqlite3(tableData: 'dict[str, tuple]', originDBType: Literal["mysql", "postgresql", "mongodb"]):  
+    tableName = list(tableData.keys())[0]
+    colNames = literal_eval(tableData[tableName][0][0])
+    jointVales = ','.join(tableRow.replace("'NULL'", "NULL") for tableRow in tableData[tableName][0][1::])
+
+    insertStatement = f"INSERT INTO {tableName} {colNames} VALUES {jointVales};"
+    insertStatement = sub(r"Decimal\('([^']+)'\)", r"'\1'", insertStatement)
+
+    return insertStatement
 
 @app.task
 def convertNoSQLtoSQL(data, originType, destinationType):
     pass
 
 if __name__ == "__main__":
-    
     #build_statement_functions_tree('ATAN(ATAN(3, ATAN(2, ATAN(2,ATAN(3, 2)))), LOG(2)) + COS(COS(3))')
-    #print(extract_arguments_and_functions('ATAN(ATAN(3, ATAN(2, 3)), LOG(2)) COS(COS(3))'))
+    #print(extract_arguments_and_functions('ATAN(ATAN(3, ATAN(2, 3)), LOG(2)) COS(COS(3))'))  
+
     app.start()
