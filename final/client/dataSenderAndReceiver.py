@@ -56,13 +56,14 @@ class ClientDataSenderAndReceiver():
         await writer.wait_closed()
         return responses
 
-    async def add_conversion_request(self, originDbType: str, convertTo: str, data) -> None:
+    async def add_conversion_request(self, originDbType: str, convertTo: str, objectType: str, data: 'dict[str, tuple]') -> None:
         self.requestID += 1
         
         convReques = {
             "id": self.requestID,
             "originDbType": originDbType,
             "convertTo": convertTo,
+            "objectType": objectType,
             "body": data
         }
         
