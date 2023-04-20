@@ -1,9 +1,17 @@
 from ast import literal_eval
 from string import punctuation
+from sys import path
 from celery import Celery
 from typing import Literal, Any
 from re import findall, fullmatch, match, search, split, sub, subn
 from anytree import Node, LevelOrderGroupIter, RenderTree
+
+try:
+    path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+except ValueError:
+    path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+
+from common.timeWrapper import time_excecution
 
 app = Celery("funcs", 
              broker="redis://localhost", 
@@ -14,10 +22,6 @@ app = Celery("funcs",
              )
 
 # Probar procesamiento con unidades de diferentes tamaños (diferentes chunks)
-
-@app.task
-def process_information():
-    pass
 
 def get_syntax_substitutions(originDBType: Literal["mysql", "sqlite3", "postgresql", "mongodb"], destinationDBType: Literal["mysql", "sqlite3", "postgresql", "mongodb"], params: 'dict[str, str]'):
     subsDict = {
@@ -308,7 +312,8 @@ def adapt_functions_tree_to_sqlite3(funcTree: Node, originDBType: Literal["mysql
     return funcTree
 
 @app.task
-def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str = None):   
+@time_excecution
+def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str, requestParams: 'dict[str, str]'):   
     # Adaptar cuestiones sintácticas básicas (caracteres para delimitar literales, información adicional innecesaria, etc)
     syntaxSubstitutions = get_syntax_substitutions(originDBType, "sqlite3", {"tableName": tableName})
     
@@ -318,18 +323,22 @@ def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType
     # Verificar qué funciones escalares y agregadas tienen su equivalente (y mapearlas) y cuáles deben quitarse del statement
     funcTree = adapt_functions_tree_to_sqlite3(build_statement_functions_tree(createStatement), originDBType)
 
-    return createStatement.replace(rf'{funcTree.oldArgs}', rf'{funcTree.newArgs}', )
+    requestParams.update({"originDBType": originDBType})
+    
+    return (createStatement.replace(rf'{funcTree.oldArgs}', rf'{funcTree.newArgs}'), requestParams) 
         
-@app.task()
-def create_table_insert_statement_for_sqlite3(tableData: 'dict[str, tuple]', originDBType: Literal["mysql", "postgresql", "mongodb"]):  
-    tableName = list(tableData.keys())[0]
-    colNames = literal_eval(tableData[tableName][0][0])
-    jointVales = ','.join(tableRow.replace("'NULL'", "NULL") for tableRow in tableData[tableName][0][1::])
+@app.task
+@time_excecution
+def create_table_insert_statement_for_sqlite3(tableRows: 'list[str]', originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str, requestParams: 'dict[str, str]'):  
+    colNames = literal_eval(tableRows[0])
+    jointVales = ','.join(tableRow.replace("'NULL'", "NULL") for tableRow in tableRows[1::])
 
     insertStatement = f"INSERT INTO {tableName} {colNames} VALUES {jointVales};"
     insertStatement = sub(r"Decimal\('([^']+)'\)", r"'\1'", insertStatement)
 
-    return insertStatement
+    requestParams.update({"originDBType": originDBType})
+    
+    return (insertStatement, requestParams)
 
 @app.task
 def convertNoSQLtoSQL(data, originType, destinationType):

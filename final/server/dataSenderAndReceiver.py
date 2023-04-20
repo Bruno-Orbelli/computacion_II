@@ -102,6 +102,7 @@ class ServerDataSenderAndReceiver():
                     {"id": None,
                      "originDbType": None,
                      "convertTo": None,
+                     "objectType": None,
                      "body": "EOT"
                     },
                     None
@@ -117,10 +118,9 @@ class ServerDataSenderAndReceiver():
         return False
     
     async def process_request(self, dbConverter: Converter) -> None:
-        processingEvent, timeTaken = await dbConverter.process_requests_in_queue(self.awaitingRequests, self.toSendQueue)
-        if processingEvent is not None:
-            processingEvent[3].update({"timeTaken": f"{timeTaken * 10**3:.03f}ms"})
-            await self.add_loggable_event_to_queue(*processingEvent)
+        processingEvents = await dbConverter.process_requests_in_queue(self.awaitingRequests, self.toSendQueue)
+        for event in processingEvents:
+            await self.add_loggable_event_to_queue(*event)
     
     async def send_converted_response(self, writer: StreamWriter, userID: str) -> None:
         processedRequest = await self.toSendQueue.get()
