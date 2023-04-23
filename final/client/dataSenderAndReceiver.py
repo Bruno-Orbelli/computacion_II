@@ -10,6 +10,7 @@ except ValueError:
     path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
 
 from common import exceptions
+from client.asyncReader import SQLDatabaseReader
 
 class ClientDataSenderAndReceiver():
 
@@ -92,8 +93,6 @@ class ClientDataSenderAndReceiver():
                     break
                 
             response = loads(b''.join(rawResponsePackets))
-            print(response)
-            print(self.toReceiveList)
             self.toReceiveList.remove(int(response["id"]))
 
         except (TimeoutError, EOFError) as e:
@@ -111,14 +110,19 @@ class ClientDataSenderAndReceiver():
 
 async def test_func():
     dataSender = ClientDataSenderAndReceiver()
-    await dataSender.add_conversion_request("mongo", "sqlite3", None)
-    await dataSender.add_conversion_request("sqlite3", "mysql", None)
-    await dataSender.add_conversion_request("mysql", "mongo", None)
-    await dataSender.add_conversion_request("mongo", "postgresql", None)
-    await dataSender.add_conversion_request("postgresql", "sqlite3", None)
-    await dataSender.add_conversion_request("mysql", "postgresql", None)
-    await dataSender.add_conversion_request("mysql", "mongo", None)
-    await dataSender.add_conversion_request("mongo", "sqlite3", None)
+    reader = SQLDatabaseReader()
+    await dataSender.add_conversion_request("mysql", "sqlite3", "table", await reader.connect_and_read_data("mysql", None,
+        connectionParams= {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306},
+        readParams= ("table", {"customers": (40, 5)})))
+    await dataSender.add_conversion_request("mysql", "sqlite3", "table", await reader.connect_and_read_data("mysql", None,
+        connectionParams= {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306},
+        readParams= ("table", {"employees": (10, 5)})))
+    await dataSender.add_conversion_request("mysql", "sqlite3", "table", await reader.connect_and_read_data("mysql", None,
+        connectionParams= {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306},
+        readParams= ("table", {"offices": (10, 5)})))
+    await dataSender.add_conversion_request("mysql", "sqlite3", "table", await reader.connect_and_read_data("mysql", None,
+        connectionParams= {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306},
+        readParams= ("table", {"orders": ()})))
     responses = await dataSender.connect_and_run()
     return responses
 
@@ -136,7 +140,7 @@ async def test_func_2():
     return responses
 
 async def main():
-    responses = await gather(test_func(), test_func_2())
+    responses = await gather(test_func())
     print(responses)
 
 if __name__ == "__main__":
