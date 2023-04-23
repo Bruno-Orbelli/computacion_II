@@ -1,4 +1,5 @@
-from asyncio import Queue
+from ast import literal_eval
+from asyncio import Queue, sleep
 from datetime import datetime
 from celery import group
 
@@ -19,16 +20,16 @@ class Converter():
             elif request["objectType"] == "table":
                 tableName = list(request["body"].keys())[0]
                 
-                createTaskArgs = [request["body"][tableName][0], request["convertTo"], tableName]
-                insertTaskArgs = [request["body"][tableName][1][1], request["convertTo"], tableName]
+                createTaskArgs = [literal_eval(request["body"][tableName][1][0])[1], request["originDbType"], tableName]
+                insertTaskArgs = [request["body"][tableName][0], request["originDbType"], tableName]
 
                 request.pop("body")
-                request.pop("convertTo")
+                request.pop("originDbType")
 
                 createTaskArgs.append(request)
                 insertTaskArgs.append(request)
                 
-                tasks.append(convert_table_create_statement_to_sqlite3.s(*createTaskArgs), create_table_insert_statement_for_sqlite3(*insertTaskArgs))
+                tasks.extend([convert_table_create_statement_to_sqlite3.s(*createTaskArgs), create_table_insert_statement_for_sqlite3.s(*insertTaskArgs)])
         
         return (tasks, endOfTransmission)
     
@@ -41,16 +42,33 @@ class Converter():
         tasks, endOfTransmission = self.build_task_group(requestsToProcess)
         
         if tasks:
-            taskGroup = group(*tasks)
-            taskGroup.apply_async()     
-        
-        processedData = taskGroup.get()
-        processingEvents = await self.add_processed_requests(processedData, processedRequestsQueue, endOfTransmission)
+            taskGroup = group(tasks)
+            result = taskGroup.apply_async()
+
+            while not result.ready():
+                await sleep(0.000000000001)
+                
+            processedData = result.get()
+            processingEvents = await self.add_processed_requests(processedData, processedRequestsQueue, endOfTransmission)
+
+        else:
+            processingEvents = await self.add_processed_requests([], processedRequestsQueue, endOfTransmission)
 
         return processingEvents
     
     async def add_processed_requests(self, processedData: list, processedRequestsQueue: Queue, endOfTransmission: bool):
         processingEvents = []
+        
+        originalLen = len(processedData)
+        for i in range(originalLen - 1):
+            try:
+                if processedData[i][0][1]["id"] == processedData[i + 1][0][1]["id"]:
+                    processedData[i][0][0] = (processedData[i][0][0], processedData[i + 1][0][0])
+                    processedData[i][1] += processedData[i + 1][1]
+                    processedData.pop(i + 1)
+            
+            except IndexError:
+                continue
         
         for result in processedData:      
             await processedRequestsQueue.put({

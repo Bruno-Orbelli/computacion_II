@@ -5,6 +5,7 @@ from celery import Celery
 from typing import Literal, Any
 from re import findall, fullmatch, match, search, split, sub, subn
 from anytree import Node, LevelOrderGroupIter, RenderTree
+import datetime
 
 try:
     path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
@@ -305,7 +306,6 @@ def adapt_functions_tree_to_sqlite3(funcTree: Node, originDBType: Literal["mysql
             else:
                 for child in funcNode.children:
                     childOldArgs = f"{child.oldArgs.replace(';', ',')}"
-                    print(f"{child.function}({childOldArgs})")
                     funcNode.newArgs = funcNode.newArgs.replace(f"{child.function}({childOldArgs})", 
                                                                 f"{child.adaptation}")
                 
@@ -323,29 +323,26 @@ def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType
     # Verificar qué funciones escalares y agregadas tienen su equivalente (y mapearlas) y cuáles deben quitarse del statement
     funcTree = adapt_functions_tree_to_sqlite3(build_statement_functions_tree(createStatement), originDBType)
 
-    requestParams.update({"originDBType": originDBType})
+    requestParams.update({"originDbType": originDBType})
     
     return (createStatement.replace(rf'{funcTree.oldArgs}', rf'{funcTree.newArgs}'), requestParams) 
         
 @app.task
 @time_excecution
-def create_table_insert_statement_for_sqlite3(tableRows: 'list[str]', originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str, requestParams: 'dict[str, str]'):  
+def create_table_insert_statement_for_sqlite3(tableRows: 'list[str]', originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str, requestParams: 'dict[str, str]'):    
     colNames = literal_eval(tableRows[0])
     jointVales = ','.join(tableRow.replace("'NULL'", "NULL") for tableRow in tableRows[1::])
 
     insertStatement = f"INSERT INTO {tableName} {colNames} VALUES {jointVales};"
     insertStatement = sub(r"Decimal\('([^']+)'\)", r"'\1'", insertStatement)
+    datetimeObjs = findall(r"(datetime.\w+\(.*?\))", insertStatement)
+    
+    for datetimeObj in datetimeObjs:
+        insertStatement = insertStatement.replace(datetimeObj, str(eval(datetimeObj)))
 
-    requestParams.update({"originDBType": originDBType})
+    requestParams.update({"originDbType": originDBType})
     
     return (insertStatement, requestParams)
 
-@app.task
-def convertNoSQLtoSQL(data, originType, destinationType):
-    pass
-
 if __name__ == "__main__":
-    #build_statement_functions_tree('ATAN(ATAN(3, ATAN(2, ATAN(2,ATAN(3, 2)))), LOG(2)) + COS(COS(3))')
-    #print(extract_arguments_and_functions('ATAN(ATAN(3, ATAN(2, 3)), LOG(2)) COS(COS(3))'))  
-
     app.start()

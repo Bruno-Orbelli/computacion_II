@@ -83,8 +83,8 @@ class ServerDataSenderAndReceiver():
         if request["id"] != "None-None":
             await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Succesfully received request", {
                 "requestID": request["id"], 
-                "requestSize": f"{getsizeof(request)}B", 
-                "originDBType": request["originDbType"],
+                "requestSize": f"{getsizeof(str(request))}B", 
+                "originDbType": request["originDbType"],
                 "convertTo": request["convertTo"]
                 })
         
@@ -119,8 +119,9 @@ class ServerDataSenderAndReceiver():
     
     async def process_request(self, dbConverter: Converter) -> None:
         processingEvents = await dbConverter.process_requests_in_queue(self.awaitingRequests, self.toSendQueue)
-        for event in processingEvents:
-            await self.add_loggable_event_to_queue(*event)
+        if processingEvents:
+            for event in processingEvents:
+                await self.add_loggable_event_to_queue(*event)
     
     async def send_converted_response(self, writer: StreamWriter, userID: str) -> None:
         processedRequest = await self.toSendQueue.get()
@@ -137,7 +138,7 @@ class ServerDataSenderAndReceiver():
         writer.write(b"\n")
         await writer.drain()
 
-        await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Sucesfully sent request response", {"requestID": serverInternalID, "responseSize": f"{getsizeof(processedRequest)}B"})
+        await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Sucesfully sent request response", {"requestID": serverInternalID, "responseSize": f"{getsizeof(str(processedRequest))}B"})
     
     async def handle_conversion_requests(self, reader: StreamReader, writer: StreamWriter) -> None:
         clientAddress = writer.get_extra_info("peername")
@@ -162,7 +163,7 @@ class ServerDataSenderAndReceiver():
         
         else:
             await self.add_loggable_event_to_queue(datetime.now(), "INFO", "User has ended connection with server", {"userID": userID})
-        
+    
         await self.log_pending_events()
         return
     
