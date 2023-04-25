@@ -1,6 +1,12 @@
 import pyodbc
 from subprocess import Popen, PIPE
+from os.path import dirname
 from sys import path
+
+try:
+    path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+except ValueError:
+    path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
 
 from common.connectionData import drivers, connStrs
 from common.exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError
@@ -22,7 +28,7 @@ class SQLDatabaseAcceser():
             
             elif dbType == "sqlite3":
                 connectionStr = connectionStr.format(dbPath)
-                process = Popen(["cat", dbPath], stdout= PIPE, stderr= PIPE)
+                process = Popen(["cat", dbPath], stdout= PIPE, stderr= PIPE) 
                 if process.communicate()[1]:
                     raise ConnectionError(
                         f"Database path '{dbPath}' not found or read/write access not granted for current user; check for any misspellings and ensure you have read/write permissions."
@@ -44,7 +50,14 @@ class SQLDatabaseAcceser():
         except pyodbc.Error:
             raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
     
-    async def run_query_and_get_result(self, query: str, cursor, *params) -> 'list | None':    
+    def check_if_directory_exists(self, dbPath: str):
+        process = Popen(f"cd {dirname(dbPath)}", stdout= PIPE, stderr= PIPE, shell= True)
+        if process.communicate()[1]:
+            raise ConnectionError(
+                f"Database dir '{dirname(dbPath)}' not found or read/write access not granted for current user; check for any misspellings and ensure you have read/write permissions."
+            )
+    
+    async def run_query_and_get_result(self, query: str, cursor: pyodbc.Cursor, *params) -> 'list | None':    
         try:
             if params:
                 cursor.execute(query, params)

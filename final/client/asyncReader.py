@@ -72,12 +72,10 @@ class SQLDatabaseReader(SQLDatabaseAcceser):
         }
 
         def extract_view_original_tables(viewDefinition: str):
-            print(viewDefinition)
             viewOriginalTables = set()
             
             for regex in viewRegexs[dbType]:
                 regex_result = findall(regex, viewDefinition)
-                print(regex_result)
                 viewOriginalTables.update([regex_tuple[1].strip() for regex_tuple in regex_result] if dbType == 'sqlite3' else regex_result)
             
             return list(viewOriginalTables)
@@ -180,7 +178,7 @@ class SQLDatabaseReader(SQLDatabaseAcceser):
             tableSQL[0] = str(tableSQL[0])
             dataQuery = SQLDataQueries[dbType].format(tableName)
             
-            if limitOffset:
+            if limitOffset != (None, None):
                 dataQuery += " LIMIT ? OFFSET ?"
                 if limitOffset[1] is None:
                     limitOffset = (limitOffset[0], 0)  
@@ -236,6 +234,7 @@ class SQLDatabaseReader(SQLDatabaseAcceser):
 
     async def build_index_data(self, dbType: str, indexName: str, tableName: str, cursor, connectionParams: dict = None) -> 'dict[str, list]':
         for name in (indexName, tableName):
+            print(name)
             self.check_for_sanitized_input(dbType, name) 
         
         try:
@@ -453,7 +452,7 @@ if __name__ == "__main__":
     
     data = run(sqlReader.connect_and_read_data("mysql", None,
         connectionParams= {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306},
-        readParams= ("table", {"customers": (5, 2)})
+        readParams= ("table", {"customers": (5, 2), "employees": (2, 2)})
         ))
     print(type(data))
     print(data)

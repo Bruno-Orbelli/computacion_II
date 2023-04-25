@@ -1,7 +1,7 @@
 from asyncio import run
 from dotenv import load_dotenv
 from os import getenv
-from re import fullmatch, search, split as resplit
+from re import fullmatch, search, split as resplit, sub
 from argparse import ArgumentParser, Namespace
 from getpass import getpass
 from copy import deepcopy
@@ -95,24 +95,31 @@ class CommandLineInterface():
                 exit(1)
         
         except (ArgumentError, ExecutionError, UnsupportedDBTypeError, ConnectionError) as e:
-            if isinstance(e, ConnectionError) and destinationArgs["dbType"] != "sqlite3":
-                destinationArgs["dbName"] = mainDbName[destinationArgs["dbType"]]
+            if isinstance(e, ConnectionError):
+                if destinationArgs["dbType"] != "sqlite3":
+                    destinationArgs["dbName"] = mainDbName[destinationArgs["dbType"]]
                 
-                try:
-                    connArgs = await self.attempt_db_connection(destinationArgs, writer)
+                    try:
+                        connArgs = await self.attempt_db_connection(destinationArgs, writer)                            
+                        
+                    except (ArgumentError, ExecutionError, UnsupportedDBTypeError, ConnectionError) as e:
+                        print("\n" + Fore.RED + f"> {e}\n")
+                        exit(1)
                 
-                except (ArgumentError, ExecutionError, UnsupportedDBTypeError, ConnectionError) as e:
-                    print("\n" + Fore.RED + f"> {e}\n")
-                    exit(1)
-            
-            elif not isinstance(e, ConnectionError):
-                print("\n" + Fore.RED + f"> {e}\n")
-                exit(1)
+                else:
+                    try:
+                        writer.check_if_directory_exists(destinationArgs["dbPath"])
+                        print(Fore.GREEN + "> Unexisting file: OK.")
+                    
+                    except ConnectionError as e:
+                        print("\n" + Fore.RED + f"> {e}\n")
+                        exit(1)
             
             else:
-                print(Fore.GREEN + "> Unexisting file: OK.")
+                print("\n" + Fore.RED + f"> {e}\n")
+                exit(1)
                 
-        readData = self.read_objects(objectsToMigrate, originArgs)
+        readData = await self.read_objects(reader, objectsToMigrate, originArgs)
      
     def get_database_format(self) -> str:
         dbFormat = None
@@ -235,7 +242,7 @@ class CommandLineInterface():
                 args.update({"password": self.get_database_password()})
         
         return args
-       
+    
     async def attempt_db_connection(self, connArgs: 'dict[str, str]', readerOrWriter: 'SQLDatabaseReader | MongoDatabaseReader | SQLDatabaseWriter | MongoDatabaseWriter') -> None:       
         if connArgs["dbType"] == "sqlite3":
             connData = connArgs["dbPath"]
@@ -277,7 +284,7 @@ class CommandLineInterface():
                 availableObjects = await reader.connect_and_get_objects_description(newArgs["dbType"], newArgs["dbPath"], newArgs)
                 objectsToMigrate.update({"tables": [(obj[1], None, None) for obj in availableObjects if obj[0] == "table"]})
                 objectsToMigrate.update({"views": [obj[1] for obj in availableObjects if obj[0] == "view"]})
-                objectsToMigrate.update({"indexes": [obj[1] for obj in availableObjects if obj[0] == "index"]})
+                objectsToMigrate.update({"indexes": [obj[1::] for obj in availableObjects if obj[0] == "index"]})
         
         else:
             if isinstance(reader, SQLDatabaseReader):
@@ -344,6 +351,7 @@ class CommandLineInterface():
         return self.get_object_names_with_limit_offset_skip(availableObjects, objectType, selectedTablesOrCollections)        
              
     def get_object_names_with_limit_offset_skip(self, availableObjects: 'list[str]', objectType: Literal["table", "collection", "view", "index"], selectedTablesOrCollections: 'list[str]' = None):
+        print(availableObjects)
         selectedObjectNames = []
         receivedInput, limit, offsetOrSkip = None, None, None
 
@@ -398,24 +406,24 @@ class CommandLineInterface():
         
         return selectedObjectNames
     
-    async def read_objects(reader: 'SQLDatabaseReader | MongoDatabaseReader', objectsToMigrate: 'dict[str, list]', originArgs: 'dict[str, str]') -> list:
+    async def read_objects(self, reader: 'SQLDatabaseReader | MongoDatabaseReader', objectsToMigrate: 'dict[str, list]', originArgs: 'dict[str, str]') -> list:
         readData = [] # solo lee las tablas intencionalmente
         
         for objType, objList in objectsToMigrate.items():
-            if objType in ("table", "collection"):
+            if objType in ("tables", "collections"):
                 tablesOrCollections = {}
                 for obj in objList:
                     tablesOrCollections.update({obj[0]: obj[1::]})
             
-            elif objType == "view":
+            elif objType == "views":
                 views = []
                 for obj in objList:
                     views.append(obj)
 
             else:
-                indexes = []
+                indexes = {}
                 for obj in objList:
-                    indexes.append(obj) 
+                    indexes.update({obj[0]: obj[1][0]}) 
                     
         dbType, dbPath = originArgs["dbType"], originArgs["dbPath"]
         originArgs.pop("dbType")
