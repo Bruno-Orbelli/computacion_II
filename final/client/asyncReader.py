@@ -12,7 +12,7 @@ except ValueError:
 from baseAcceser import SQLDatabaseAcceser
 
 from common.queries import SQLDbStructureQueries, SQLObjectsNameQueries, SQLDataQueries, SQLViewQueries, SQLIndexQueries, mongodbAvailableQueryElems
-from common.connectionData import drivers, connStrs
+from common.connectionData import connStrs
 from common.exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError
 
 # SQL
@@ -36,7 +36,7 @@ class SQLDatabaseReader(SQLDatabaseAcceser):
             if dbType == "mysql":
                 connectionParams.update({"dbName": "INFORMATION_SCHEMA"})
 
-            with await self.get_connection(dbType, dbPath, connectionParams) as connection:
+            with await self.get_connection(dbType, dbPath, connectionParams, False) as connection:
                 query = SQLObjectsNameQueries[dbType]
                 cursor = await self.get_cursor(connection)
                     
@@ -120,7 +120,7 @@ class SQLDatabaseReader(SQLDatabaseAcceser):
         }
         
         try:
-            with await self.get_connection(dbType, dbPath, connectionParams) as connection:
+            with await self.get_connection(dbType, dbPath, connectionParams, False) as connection:
                 cursor = await self.get_cursor(connection)
                 tasks = taskFunctions[readParams[0]](dbType, cursor, connectionParams, readParams[1])
                 data = await gather(*tasks)
@@ -255,21 +255,6 @@ class SQLDatabaseReader(SQLDatabaseAcceser):
         return {
             f"{indexName}-{tableName}": indexData[0]
             }
-
-    def check_for_sanitized_input(self, dbType: str, queryInput: str) -> None:
-        forbbidenChars = {
-            "sqlite3": ["[", "]", "'"],
-            "mysql": ["`"],
-            "postgresql": ["\"", "'"]
-        }
-        
-        for char in forbbidenChars[dbType]:
-            splitInput = queryInput.split(char)
-
-            if len(splitInput) > 1:
-                raise ArgumentError(
-                    "Potencially malicious query arguments. Query input containing quotes, backticks or squared brackets is always rejected depending on database type, as to avoid SQL injections."
-                )
 
 # NoSQL
 # Escribir permisos necesarios para MongoDB

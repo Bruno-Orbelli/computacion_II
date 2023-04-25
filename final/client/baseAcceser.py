@@ -7,7 +7,7 @@ from common.exceptions import ExecutionError, ConnectionError, UnsupportedDBType
 
 class SQLDatabaseAcceser():
     
-    async def get_connection(self, dbType: str, dbPath: str = None, connectionParams: dict = None) -> pyodbc.Connection:        
+    async def get_connection(self, dbType: str, dbPath: str = None, connectionParams: dict = None, autocommit = bool) -> pyodbc.Connection:        
         if dbType not in connStrs:
             raise UnsupportedDBTypeError(f"Unsupported or unexisting database type '{dbType}'.")
         
@@ -31,7 +31,7 @@ class SQLDatabaseAcceser():
         connectionStr = f"DRIVER={{{drivers[dbType]}}};" + connectionStr
         
         try:
-            return pyodbc.connect(connectionStr, readonly= True, autocommit= False)
+            return pyodbc.connect(connectionStr, readonly= True, autocommit= autocommit)
         
         except (pyodbc.OperationalError, pyodbc.Error):
             raise ConnectionError(
@@ -44,7 +44,7 @@ class SQLDatabaseAcceser():
         except pyodbc.Error:
             raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
     
-    async def run_query_and_get_result(self, query: str, cursor, *params) -> list:    
+    async def run_query_and_get_result(self, query: str, cursor, *params) -> 'list | None':    
         try:
             if params:
                 cursor.execute(query, params)
@@ -57,4 +57,23 @@ class SQLDatabaseAcceser():
             else:
                 raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
         
-        return cursor.fetchall()
+        try:
+            return cursor.fetchall()
+        
+        except pyodbc.ProgrammingError:
+            pass
+    
+    def check_for_sanitized_input(self, dbType: str, queryInput: str) -> None:
+        forbbidenChars = {
+            "sqlite3": ["[", "]", "'"],
+            "mysql": ["`"],
+            "postgresql": ["\"", "'"]
+        }
+        
+        for char in forbbidenChars[dbType]:
+            splitInput = queryInput.split(char)
+
+            if len(splitInput) > 1:
+                raise ArgumentError(
+                    "Potencially malicious query arguments. Query input containing quotes, backticks or squared brackets is always rejected depending on database type, as to avoid SQL injections."
+                )
