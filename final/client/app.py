@@ -126,10 +126,11 @@ class CommandLineInterface():
         senderReceiver = ClientDataSenderAndReceiver()
         
         for objTuple in readData:
-            objType, objDict = objTuple
-            senderReceiver.add_conversion_request(originArgs["dbType"], destinationArgs["dbType"], objType, objDict)
+            objType, objList = objTuple
+            for objDict in objList:
+                await senderReceiver.add_conversion_request(originArgs["dbType"], destinationArgs["dbType"], objType, objDict)
         
-        responses = senderReceiver.connect_and_run()
+        responses = await senderReceiver.connect_and_run()
      
     def get_database_format(self) -> str:
         dbFormat = None
@@ -433,7 +434,6 @@ class CommandLineInterface():
                     
                     for obj in objList:
                         tablesOrCollections.update({obj[0]: obj[1::]})
-                        progressBar.update(1)
                 
                 '''elif objType == "views":
                     for obj in objList:
@@ -444,13 +444,14 @@ class CommandLineInterface():
                         indexes.update({obj[0]: obj[1][0]})''' # conversión de vistas e índices aún no operativas
                     
         dbType, dbPath = originArgs["dbType"], originArgs["dbPath"]
-        originArgs.pop("dbType")
-        originArgs.pop("dbPath")
+        auxArgs = deepcopy(originArgs)
+        auxArgs.pop("dbType")
+        auxArgs.pop("dbPath")
         
         progressBar = tqdm(desc= "Reading objects data...", total= len(tablesOrCollections) + len(views) + len(indexes), colour= "green")
         for objTuple in (("table", tablesOrCollections), ("view", views), ("index", indexes)):
             if objTuple[1]:
-                readData.append((objTuple[0], await reader.connect_and_read_data(dbType, dbPath, originArgs, objTuple)))
+                readData.append((objTuple[0], await reader.connect_and_read_data(dbType, dbPath, auxArgs, objTuple)))
             progressBar.update(len(objTuple[1]))
 
         return readData

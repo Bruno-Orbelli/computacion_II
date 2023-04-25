@@ -124,11 +124,7 @@ class SQLDatabaseReader(SQLDatabaseAcceser):
                 data = await gather(*tasks)
                 cursor.close()
             
-            result = {}
-            for dataDict in data:
-                result.update(dataDict)
-            
-            return result
+            return data
         
         except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
             raise e
@@ -451,7 +447,7 @@ if __name__ == "__main__":
     
     data = run(sqlReader.connect_and_read_data("mysql", None,
         connectionParams= {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306},
-        readParams= ("table", {"customers": (5, 2), "employees": (2, 2)})
+        readParams= ("table", {"customers": (None, None), "employees": (None, None)})
         ))
     print(type(data))
     print(data)
