@@ -1,20 +1,21 @@
 from asyncio import run
 from dotenv import load_dotenv
 from os import getenv
-from re import fullmatch, search, split as resplit, sub
+from re import fullmatch, split as resplit
 from argparse import ArgumentParser, Namespace
 from getpass import getpass
 from copy import deepcopy
 from sys import path
 
-import tqdm
-from colorama import Fore, Back, Style, init
+from tqdm import tqdm
+from colorama import Fore, Back, init
 from pyfiglet import Figlet
 from time import sleep
 from typing import Literal
 
 from asyncReader import SQLDatabaseReader, MongoDatabaseReader
 from asyncWriter import SQLDatabaseWriter, MongoDatabaseWriter
+from dataSenderAndReceiver import ClientDataSenderAndReceiver
 
 try:
     path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
@@ -119,7 +120,16 @@ class CommandLineInterface():
                 print("\n" + Fore.RED + f"> {e}\n")
                 exit(1)
                 
+        print("\nReading database...")
         readData = await self.read_objects(reader, objectsToMigrate, originArgs)
+        
+        senderReceiver = ClientDataSenderAndReceiver()
+        
+        for objTuple in readData:
+            objType, objDict = objTuple
+            senderReceiver.add_conversion_request(originArgs["dbType"], destinationArgs["dbType"], objType, objDict)
+        
+        responses = senderReceiver.connect_and_run()
      
     def get_database_format(self) -> str:
         dbFormat = None
@@ -300,7 +310,7 @@ class CommandLineInterface():
             viewNames = self.display_available_objects_and_get_input(availableObjects, "view", connArgs["dbName"], [obj[0] for obj in tableOrCollectionNames])
             indexNames = self.display_available_objects_and_get_input(availableObjects, "index", connArgs["dbName"], [obj[0] for obj in tableOrCollectionNames])
             objectsToMigrate.update({"views": viewNames, "indexes": indexNames})
-        
+    
         return objectsToMigrate
                
     def build_available_objects(self, availableObjects: 'list[tuple[str]]', objectType: str, selectedTablesOrCollections: 'list[str]'):
@@ -351,8 +361,7 @@ class CommandLineInterface():
         return self.get_object_names_with_limit_offset_skip(availableObjects, objectType, selectedTablesOrCollections)        
              
     def get_object_names_with_limit_offset_skip(self, availableObjects: 'list[str]', objectType: Literal["table", "collection", "view", "index"], selectedTablesOrCollections: 'list[str]' = None):
-        print(availableObjects)
-        selectedObjectNames = []
+        selectedObjectNames, selectedObjects = [], []
         receivedInput, limit, offsetOrSkip = None, None, None
 
         while receivedInput != "":            
@@ -402,38 +411,48 @@ class CommandLineInterface():
                     continue
             
             if objectName:
-                selectedObjectNames.append((objectName, limit, offsetOrSkip) if objectType in ("table", "collection") else objectName)
+                if objectType in ("table", "collection"):
+                    selectedObjects.append((objectName, limit, offsetOrSkip))
+                elif objectType in ("view"):
+                    selectedObjects.append(objectName)
+                else:
+                    indexTuple = next(filter(lambda obj: obj[1] == objectName, availableObjects), None)
+                    selectedObjects.append(indexTuple[1::])
+                
+                selectedObjectNames.append(objectName)
         
-        return selectedObjectNames
+        return selectedObjects
     
     async def read_objects(self, reader: 'SQLDatabaseReader | MongoDatabaseReader', objectsToMigrate: 'dict[str, list]', originArgs: 'dict[str, str]') -> list:
         readData = [] # solo lee las tablas intencionalmente
+        tablesOrCollections, views, indexes = {}, [], {}
         
         for objType, objList in objectsToMigrate.items():
-            if objType in ("tables", "collections"):
-                tablesOrCollections = {}
-                for obj in objList:
-                    tablesOrCollections.update({obj[0]: obj[1::]})
-            
-            elif objType == "views":
-                views = []
-                for obj in objList:
-                    views.append(obj)
+            if objList:
+                if objType in ("tables", "collections"):
+                    
+                    for obj in objList:
+                        tablesOrCollections.update({obj[0]: obj[1::]})
+                        progressBar.update(1)
+                
+                '''elif objType == "views":
+                    for obj in objList:
+                        views.append(obj)
 
-            else:
-                indexes = {}
-                for obj in objList:
-                    indexes.update({obj[0]: obj[1][0]}) 
+                else:
+                    for obj in objList:
+                        indexes.update({obj[0]: obj[1][0]})''' # conversión de vistas e índices aún no operativas
                     
         dbType, dbPath = originArgs["dbType"], originArgs["dbPath"]
         originArgs.pop("dbType")
         originArgs.pop("dbPath")
         
+        progressBar = tqdm(desc= "Reading objects data...", total= len(tablesOrCollections) + len(views) + len(indexes), colour= "green")
         for objTuple in (("table", tablesOrCollections), ("view", views), ("index", indexes)):
             if objTuple[1]:
-                readData.append(await reader.connect_and_read_data(dbType, dbPath, originArgs, objTuple))
-        
-        print(readData)
+                readData.append((objTuple[0], await reader.connect_and_read_data(dbType, dbPath, originArgs, objTuple)))
+            progressBar.update(len(objTuple[1]))
+
         return readData
             
 if __name__ == "__main__":

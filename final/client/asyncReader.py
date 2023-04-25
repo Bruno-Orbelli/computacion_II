@@ -234,7 +234,6 @@ class SQLDatabaseReader(SQLDatabaseAcceser):
 
     async def build_index_data(self, dbType: str, indexName: str, tableName: str, cursor, connectionParams: dict = None) -> 'dict[str, list]':
         for name in (indexName, tableName):
-            print(name)
             self.check_for_sanitized_input(dbType, name) 
         
         try:
