@@ -14,3 +14,8 @@ connStrs = {
         "nonauth": "mongodb://{host}:{port}"
     }
 }
+
+mainDbName = {
+    "mysql": "mysql",
+    "postgresql": "postgres"
+}
