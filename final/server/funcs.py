@@ -29,8 +29,8 @@ def get_syntax_substitutions(originDBType: Literal["mysql", "sqlite3", "postgres
         ("mysql", "sqlite3") : {
             r'(?<!FOREIGN|PRIMARY) KEY .+,\n': "",
             r'ENGINE=.+': "",
-            r'\s\`': " [",
-            r'\`\s': "] ",
+            r'(\s|,)\`': r"\1[",
+            r'\`(\s|,)': r"]\1",
             r'\(\`': "([",
             r'\`\)': "])"
         },
@@ -314,6 +314,7 @@ def adapt_functions_tree_to_sqlite3(funcTree: Node, originDBType: Literal["mysql
 @app.task
 @time_excecution
 def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str, requestParams: 'dict[str, str]'):   
+    print(createStatement)
     # Adaptar cuestiones sintácticas básicas (caracteres para delimitar literales, información adicional innecesaria, etc)
     syntaxSubstitutions = get_syntax_substitutions(originDBType, "sqlite3", {"tableName": tableName})
     
@@ -325,6 +326,7 @@ def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType
 
     requestParams.update({"originDbType": originDBType})
     
+    print(createStatement.replace(rf'{funcTree.oldArgs}', rf'{funcTree.newArgs}'))
     return (createStatement.replace(rf'{funcTree.oldArgs}', rf'{funcTree.newArgs}'), requestParams) 
         
 @app.task
