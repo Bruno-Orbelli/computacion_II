@@ -1,16 +1,16 @@
-from asyncio import Queue, StreamReader, StreamWriter, Task, TimeoutError, create_task, gather, run, open_connection, wait_for
+from asyncio import Queue, StreamReader, StreamWriter, TimeoutError, open_connection, wait_for
 from pickle import dumps, loads
-from sys import getsizeof, path
+from sys import path
 from os import getenv
 from dotenv import load_dotenv
+from tqdm import tqdm
 
 try:
     path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
 except ValueError:
     path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
 
-from common import exceptions
-from client.asyncReader import SQLDatabaseReader
+from common.exceptions import InitializationError, ConnectionError
 
 class ClientDataSenderAndReceiver():
 
@@ -24,7 +24,7 @@ class ClientDataSenderAndReceiver():
         if None in (self.serverIPV4[1], self.serverIPV4Port[1], self.serverConnTimeout[1], self.serverResponseTimeout[1]):
             envVars = (self.serverIPV4, self.serverIPV4Port, self.serverConnTimeout, self.serverResponseTimeout)
             envVarsStr = ", ".join(envVar[0] for envVar in envVars if envVar[1] is None)
-            raise exceptions.InitializationError(
+            raise InitializationError(
                 f"Could not read environment variable{'s' if tuple(enVar[1] for enVar in envVars).count(None) > 1 else ''} {envVarsStr}. Check for any modifications in '.env'."
                 )
         
@@ -41,22 +41,28 @@ class ClientDataSenderAndReceiver():
         try:
             reader, writer = await wait_for(open_connection(self.serverIPV4, self.serverIPV4Port), timeout= self.serverConnTimeout)
         
-        except (ConnectionRefusedError, TimeoutError, ):
-            raise exceptions.ConnectionError(
+        except (ConnectionRefusedError, TimeoutError):
+            raise ConnectionError(
                 f"Failed to connect to conversion server at '{self.serverIPV4}:{self.serverIPV4Port}'. Ensure server is up and running at that address."
                 )
 
         responses = []
+        sendProgress = tqdm(desc= "Sending conversion requests...", total= len(self.toReceiveList), colour= "green", position= 0, leave= True)
+        receiveProgress = tqdm(desc= "Receiving converted requests...", total= len(self.toReceiveList), colour= "green", position= 1, leave= True)
         
         while not self.toSendQueue.empty():
             request = await self.toSendQueue.get()
-            await self.send_conversion_request(writer, request)
-            responses.append(await self.receive_conversion_response(reader))
+            await self.send_conversion_request(writer, request, sendProgress)
+            await self.get_response_and_append(responses, reader, receiveProgress)
         
         writer.close()
         await writer.wait_closed()
         return responses
-
+    
+    async def get_response_and_append(self, responseList: list, reader: StreamReader, receiveProgressBar: tqdm) -> None:
+        response = await self.receive_conversion_response(reader, receiveProgressBar)
+        responseList.append(response)
+    
     async def add_conversion_request(self, originDbType: str, convertTo: str, objectType: str, data: 'dict[str, tuple]') -> None:
         self.requestID += 1
         
@@ -71,17 +77,18 @@ class ClientDataSenderAndReceiver():
         await self.toSendQueue.put(convReques)
         self.toReceiveList.append(self.requestID)
 
-    async def send_conversion_request(self, writer: StreamWriter, request: dict) -> None:
+    async def send_conversion_request(self, writer: StreamWriter, request: dict, progressBar: tqdm) -> None:
         pickledRequest = dumps(request)
         writer.write(pickledRequest)
         await writer.drain()
             
         writer.write(b'\n')
         await writer.drain()
-        
+        progressBar.update(1)
+
         # Agregar una opción de retry?
 
-    async def receive_conversion_response(self, reader: StreamReader) -> dict:
+    async def receive_conversion_response(self, reader: StreamReader, progressBar: tqdm) -> dict:
         try:
             rawResponsePackets = []
             
@@ -94,15 +101,16 @@ class ClientDataSenderAndReceiver():
                 
             response = loads(b''.join(rawResponsePackets))
             self.toReceiveList.remove(int(response["id"]))
+            progressBar.update(1)
 
         except (TimeoutError, EOFError) as e:
             if isinstance(e, TimeoutError):
-                raise exceptions.ConnectionError(
+                raise ConnectionError(
                     f"No response from conversion server at '{self.serverIPV4}:{self.serverIPV4Port}' after {self.serverResponseTimeout}s. Ensure server is still up and try again."
                     )
 
             else:
-                raise exceptions.ConnectionError(
+                raise ConnectionError(
                     f"Connection with conversion server at '{self.serverIPV4}:{self.serverIPV4Port}' has been lost. Ensure server is still up and try again."
                 )
         

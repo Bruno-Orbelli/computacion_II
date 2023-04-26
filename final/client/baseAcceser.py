@@ -1,6 +1,5 @@
 import pyodbc
-from subprocess import Popen, PIPE
-from os.path import dirname
+from os.path import dirname, isfile, exists
 from sys import path
 
 try:
@@ -28,12 +27,25 @@ class SQLDatabaseAcceser():
             
             elif dbType == "sqlite3":
                 connectionStr = connectionStr.format(dbPath)
-                process = Popen(["cat", dbPath], stdout= PIPE, stderr= PIPE) 
-                if process.communicate()[1]:
+                if not exists(dbPath):
                     raise ConnectionError(
-                        f"Database path '{dbPath}' not found or read/write access not granted for current user; check for any misspellings and ensure you have read/write permissions."
+                        f"Database path '{dbPath}' not found; check for any misspellings."
                         )
-        
+                
+                elif not isfile(dbPath):
+                    raise ConnectionError(
+                        f"Path '{dbPath}' does not point to a valid database file."
+                    )
+                
+                else:
+                    try:
+                        open(dbPath, 'r')
+                    
+                    except PermissionError:
+                        raise ConnectionError(
+                            f"Read access on file '{dbPath}' is not granted for current user; ensure you have the required permissions."
+                        )
+
         connectionStr = f"DRIVER={{{drivers[dbType]}}};" + connectionStr
         
         try:
@@ -50,11 +62,10 @@ class SQLDatabaseAcceser():
         except pyodbc.Error:
             raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
     
-    def check_if_directory_exists(self, dbPath: str):
-        process = Popen(f"cd {dirname(dbPath)}", stdout= PIPE, stderr= PIPE, shell= True)
-        if process.communicate()[1]:
+    def check_if_directory_exists(self, dbPath: str) -> None:
+        if not exists(dirname(dbPath)):
             raise ConnectionError(
-                f"Database dir '{dirname(dbPath)}' not found or read/write access not granted for current user; check for any misspellings and ensure you have read/write permissions."
+                f"Database dir '{dirname(dbPath)}' not found; check for any misspellings."
             )
     
     async def run_query_and_get_result(self, query: str, cursor: pyodbc.Cursor, *params) -> 'list | None':    

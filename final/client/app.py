@@ -1,6 +1,7 @@
 from asyncio import run
 from dotenv import load_dotenv
 from os import getenv
+from os.path import basename
 from re import fullmatch, split as resplit
 from argparse import ArgumentParser, Namespace
 from getpass import getpass
@@ -123,14 +124,14 @@ class CommandLineInterface():
         print("\nReading database...")
         readData = await self.read_objects(reader, objectsToMigrate, originArgs)
         
+        print("\nContacting conversion server...")
         senderReceiver = ClientDataSenderAndReceiver()
-        
-        for objTuple in readData:
-            objType, objList = objTuple
-            for objDict in objList:
-                await senderReceiver.add_conversion_request(originArgs["dbType"], destinationArgs["dbType"], objType, objDict)
-        
-        responses = await senderReceiver.connect_and_run()
+        responses = await self.send_requests_and_get_response(senderReceiver, readData, originArgs, destinationArgs)
+
+        print("\nWriting migrated database...")
+        await self.write_objects(writer, responses, destinationArgs)
+
+        print("\n" + Fore.GREEN + "> Database migration succesful.")
      
     def get_database_format(self) -> str:
         dbFormat = None
@@ -262,7 +263,7 @@ class CommandLineInterface():
         
         connArgs.setdefault("dbPath", None)
         if connArgs["dbPath"] is not None:
-            connArgs.setdefault("dbName", connArgs["dbPath"].split("/")[-1][:-3:])
+            connArgs.setdefault("dbName", basename(connArgs["dbPath"]))
         
         print(f"\nAttempting connection to {connData}...")
         
@@ -448,13 +449,55 @@ class CommandLineInterface():
         auxArgs.pop("dbType")
         auxArgs.pop("dbPath")
         
-        progressBar = tqdm(desc= "Reading objects data...", total= len(tablesOrCollections) + len(views) + len(indexes), colour= "green")
+        progressBar = tqdm(desc= "Reading objects data...", total= len(tablesOrCollections) + len(views) + len(indexes), colour= "green", position=0, leave=True)
         for objTuple in (("table", tablesOrCollections), ("view", views), ("index", indexes)):
             if objTuple[1]:
                 readData.append((objTuple[0], await reader.connect_and_read_data(dbType, dbPath, auxArgs, objTuple)))
             progressBar.update(len(objTuple[1]))
 
         return readData
+    
+    async def send_requests_and_get_response(self, senderReceiver: ClientDataSenderAndReceiver, dataToSend: 'list[tuple]', originArgs: 'dict[str, str]', destinationArgs: 'dict[str, str]'):
+        for objTuple in dataToSend:
+            objType, objList = objTuple
+            for objDict in objList:
+                await senderReceiver.add_conversion_request(originArgs["dbType"], destinationArgs["dbType"], objType, objDict)
+        
+        responses = await senderReceiver.connect_and_run()
+        return responses
+    
+    async def write_objects(self, writer: 'SQLDatabaseWriter | MongoDatabaseWriter', responsePackets: 'list[dict]', destinationArgs: 'dict[str, str]'):
+        dbType, dbPath = destinationArgs["dbType"], destinationArgs["dbPath"]
+        auxArgs = deepcopy(destinationArgs)
+        auxArgs.pop("dbType")
+        auxArgs.pop("dbPath")
+        
+        try:
+            await writer.connect_and_create_database(dbType, dbPath, auxArgs)
+        
+        except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
+            print("\n" + Fore.RED + f"> {e}\n")
+            exit(1)
+        
+        tableOrCollectionStatements, viewStatements, indexStatements = [], [], []
+        
+        listToAppend = {
+            "table": tableOrCollectionStatements,
+            "collection": tableOrCollectionStatements,
+            "view": viewStatements,
+            "index": indexStatements
+        }
+        
+        for packet in responsePackets:
+            listToAppend[packet["objectType"]].append(packet["body"])
+
+        progressBar = tqdm(desc= "Writing objects data...", total= len(tableOrCollectionStatements) + len(viewStatements) + len(indexStatements), colour= "green", position=0, leave=True)
+        
+        for statementTuple in (("table", tableOrCollectionStatements), ("view", viewStatements), ("index", indexStatements)):
+            objType, statementList = statementTuple
+            await writer.connect_and_load_data(dbType, objType, statementList, dbPath, auxArgs)
+            progressBar.update(len(statementList))
+               
             
 if __name__ == "__main__":
     cli = CommandLineInterface()
