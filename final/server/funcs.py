@@ -48,31 +48,47 @@ def get_natively_mapped_functions(originDBType: Literal["mysql", "sqlite3", "pos
         ("mysql", "sqlite3") : {
             "ABS": "ABS({0})",
             "AVG": "AVG({0})",
+            "BIGINT": "BIGINT({0})",
+            "BIT": "BIT({0})",
+            "BLOB": "BLOB({0})",
             "CAST": "CAST({0} AS {1})",
             "CHAR": "CHAR({0})",
             "COUNT": "COUNT({0})",
-            "DATE": "DATE({0})",
+            "DATE": ("DATE({0})", "DATE"),
+            "DATETIME": "DATETIME({0})",
+            "ENUM": "TEXT",
+            "FLOAT": ("FLOAT({0}, {1})", "FLOAT({0})"),
             "IFNULL": "IFNULL({0}, {1})",
             "INSTR": "INSTR({0}, {1})",
+            "INT": "INT({0})",
+            "INTEGER": "INTEGER{0}",
             "LENGTH": "LENGTH({0})",
             "LOWER": "LOWER({0})",
             "LTRIM": "LTRIM({0})",
             "NULLIF": "NULLIF({0}, {1})",
             "JSON_ARRAY": "JSON_ARRAY({concatOfArgs})",
             "MAX": "MAX({0})",
+            "MEDIUMINT": "MEDIUMINT({0})",
             "MIN": "MIN({0})",
             "REGEXP": "{0} REGEXP {1}",
             "REPLACE": "REPLACE({0}, {1}, {2})",
             "ROUND": "ROUND({0})",
             "RTRIM": "RTRIM({0})",
+            "SET": "TEXT",
             "SIGN": "SIGN({0})",
+            "SMALLINT": "SMALLINT({0})",
             "SUM": "SUM({0})",
+            "TEXT": "TEXT({0})",
             "TIME": "TIME({0})",
+            "TINYINT": "TINYINT({0})",
             "UPPER": "UPPER({0})",
             "ASCII": "UNICODE({0})",
             "CHAR_LENGTH": "LENGTH({0})",
             "CHARACTER_LENGTH": "LENGTH({0})",
+            "DEC": "DEC({0}, {1})",
+            "DECIMAL": "DECIMAL({0}, {1})",
             "DIV": "{0} / {1}",
+            "DOUBLE": "DOUBLE({0}, {1})",
             "LAST_INSERT_ID": "LAST_INSERT_ROWID()",
             "LCASE": "LOWER({0})",
             "JSON_ARRAYAGG": "JSON_GROUP_ARRAY({0})",
@@ -81,6 +97,8 @@ def get_natively_mapped_functions(originDBType: Literal["mysql", "sqlite3", "pos
             "RLIKE": "{0} REGEXP {1}",
             "ROW_COUNT": "CHANGES()",
             "UCASE": "UPPER({0})",
+            "VARBINARY": "VARBINARY({0})",
+            "VARCHAR": "VARCHAR({0})",
             "VERSION": "SQLITE_VERSION()",
             "ACOS": "ACOS({0})",
             "ASIN": "ASIN({0})",
@@ -119,7 +137,7 @@ def get_non_natively_mapped_functions(originDBType: Literal["mysql", "sqlite3", 
             "VAR_POP": "SUM(({0}.{1} - sub.a) * ({0}.{1} - sub.a)) / (COUNT({0}.{1}) - 1) FROM (SELECT AVG({0}.{1}) AS a FROM {0}) AS sub",
             "VAR_SAMP": "SUM(({0}.{1} - sub.a) * ({0}.{1} - sub.a)) / (COUNT({0}.{1}) - 1) FROM (SELECT AVG({0}.{1}) AS a FROM {0}) AS sub",
             "VARIANCE": "SUM(({0}.{1} - sub.a) * ({0}.{1} - sub.a)) / (COUNT({0}.{1}) - 1) FROM (SELECT AVG({0}.{1}) AS a FROM {0}) AS sub",
-            "MEMBER OF": "'{0}' IN (SELECT value FROM json_each({1})",
+            # "MEMBER OF": "'{0}' IN (SELECT value FROM json_each({1})",
             "DIV": "CAST({0} / {1} AS INT)",
             "/": "CAST({0} AS FLOAT) / CAST({1} AS FLOAT)",
             "IF": "CASE WHEN {0} AND {1} IS NOT NULL THEN {1} ELSE {2} END",
@@ -194,7 +212,7 @@ def get_non_natively_mapped_functions(originDBType: Literal["mysql", "sqlite3", 
                                 ),
             "TRIM": "RTRIM(LTRIM({0}, {1}), {2})",
             "UNHEX": "CAST(X'{0}' AS TEXT)",
-            "BINARY": "CAST({0} AS BINARY)",
+            # "BINARY": "CAST({0} AS BINARY)", maldito mysql
             "CONVERT": "CAST({0} AS {1})",  # en caso de using, no disponible
             "~": "~{0} + 18446744073709551616",
             "BIT_COUNT": "WITH RECURSIVE bit_cnt(bitNum, cnt) AS (SELECT (WITH RECURSIVE bin(x, y) AS (SELECT CAST({0} AS INTEGER), '' UNION ALL SELECT x / 2, CAST((x % 2) AS TEXT) || y FROM bin WHERE x > 0) SELECT ltrim(bin.y, '0') AS binary_string FROM bin ORDER BY length(binary_string) DESC LIMIT 1), 0	UNION ALL SELECT substr(bitNum, 2),	CASE WHEN substr(bitNum, 1, 1) = '1' THEN cnt + 1 ELSE cnt END FROM bit_cnt	WHERE length(bitNum) > 0) SELECT MAX(cnt) FROM bit_cnt",
@@ -253,9 +271,13 @@ def build_function_and_argument_nodes(funcString: str, parentNode: Node) -> None
             maxReachedLevel = level
         
         if char == '(':
-            if level == 0:
+            if level == 0 and tokenStr[-1] != " ":
                 funcs.append([tokenStr])
                 tokenStr = ""
+            
+            elif tokenStr[-1] == " ":
+                tokenStr = ""
+                continue
             
             level += 1
             
@@ -280,14 +302,15 @@ def build_function_and_argument_nodes(funcString: str, parentNode: Node) -> None
                 tokenStr = ""
                 continue
         
-        elif fullmatch(r'\W', char) and char not in (" ", "."):
+        elif fullmatch(r'\W', char) and char not in (" ", ".", "'"):
             continue
 
         tokenStr += char
         
     i = 0
     for func, argList in zip(funcs, args):
-        newNode = Node(name= f'{i}', parent= parentNode, function= func[0].strip(), oldArgs= '; '.join(arg.strip() for arg in argList), newArgs= ';'.join(arg.strip() for arg in argList), maxReachedLevel= maxReachedLevel, adaptation=None)
+        correctedFunc = func[0].split(" ")[-1].strip()
+        newNode = Node(name= f'{i}', parent= parentNode, function= correctedFunc, oldArgs= '; '.join(arg.strip() for arg in argList), newArgs= ';'.join(arg.strip() for arg in argList), maxReachedLevel= maxReachedLevel, adaptation=None)
         i += 1
 
 def adapt_functions_tree_to_sqlite3(funcTree: Node, originDBType: Literal["mysql", "postgresql", "mongodb"]) -> Node:
@@ -311,10 +334,13 @@ def adapt_functions_tree_to_sqlite3(funcTree: Node, originDBType: Literal["mysql
                 
     return funcTree
 
+def adapt_defaults_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"]) -> str:
+    if originDBType == "mysql":
+        return sub(r" DEFAULT ([^ \t\n\r\f\v,]+)([\s,])", r" DEFAULT(\1)\2", createStatement)
+
 @app.task
 @time_excecution
-def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str, requestParams: 'dict[str, str]'):   
-    print(createStatement)
+def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str, requestParams: 'dict[str, str]'):
     # Adaptar cuestiones sintácticas básicas (caracteres para delimitar literales, información adicional innecesaria, etc)
     syntaxSubstitutions = get_syntax_substitutions(originDBType, "sqlite3", {"tableName": tableName})
     
@@ -325,17 +351,28 @@ def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType
     funcTree = adapt_functions_tree_to_sqlite3(build_statement_functions_tree(createStatement), originDBType)
 
     requestParams.update({"originDbType": originDBType})
-    
-    print(createStatement.replace(rf'{funcTree.oldArgs}', rf'{funcTree.newArgs}'))
-    return (createStatement.replace(rf'{funcTree.oldArgs}', rf'{funcTree.newArgs}'), requestParams) 
+    createStatement = createStatement.replace(rf'{funcTree.oldArgs}', rf'{funcTree.newArgs}')
+
+    return (adapt_defaults_to_sqlite3(createStatement, originDBType), requestParams) 
         
 @app.task
 @time_excecution
 def create_table_insert_statement_for_sqlite3(tableRows: 'list[str]', originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str, requestParams: 'dict[str, str]'):    
     colNames = literal_eval(tableRows[0])
-    jointVales = ','.join(tableRow.replace("'NULL'", "NULL") for tableRow in tableRows[1::])
+    
+    if len(colNames) == 1:
+        colNames = f"({colNames[0]})"
+        correctedRowList = []
+        
+        for tableRow in tableRows[1::]:
+            correctedRowList.append(f"({literal_eval(tableRow)[0]})".replace("'NULL'", "NULL"))
+            
+        jointValues = ",".join(rowStr for rowStr in correctedRowList)
+    
+    else:
+        jointValues = ','.join(tableRow.replace("'NULL'", "NULL") for tableRow in tableRows[1::])
 
-    insertStatement = f"INSERT INTO {tableName} {colNames} VALUES {jointVales};"
+    insertStatement = f"INSERT INTO {tableName} {colNames} VALUES {jointValues};"
     insertStatement = sub(r"Decimal\('([^']+)'\)", r"'\1'", insertStatement)
     datetimeObjs = findall(r"(datetime.\w+\(.*?\))", insertStatement)
     
