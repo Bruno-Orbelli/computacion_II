@@ -131,7 +131,7 @@ class CommandLineInterface():
         print("\nWriting migrated database...")
         await self.write_objects(writer, responses, destinationArgs)
 
-        print("\n" + Fore.GREEN + "> Database migration succesful.")
+        print("\n" + Fore.GREEN + "> Database migration successful.")
      
     def get_database_format(self) -> str:
         dbFormat = None
@@ -408,9 +408,10 @@ class CommandLineInterface():
 
             if objectType == "view":
                 viewTuple = next(filter(lambda obj: obj[1] == objectName, availableObjects), None)
-                if not all(originalTableOrView in selectedTablesOrCollections + selectedObjectNames for originalTableOrView in viewTuple[2]):
-                    print(Fore.RED + f"\n> {objectType.capitalize()} '{objectName}' cannot be selected for conversion, since at least one of the tables/collections/views it depends on has not yet been selected.\n")
-                    continue
+                if viewTuple:
+                    if not all(originalTableOrView in selectedTablesOrCollections + selectedObjectNames for originalTableOrView in viewTuple[2]):
+                        print(Fore.RED + f"\n> {objectType.capitalize()} '{objectName}' cannot be selected for conversion, since at least one of the tables/collections/views it depends on has not yet been selected.\n")
+                        continue
             
             if objectName:
                 if objectType in ("table", "collection"):
