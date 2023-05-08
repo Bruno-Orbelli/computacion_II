@@ -1,10 +1,12 @@
 from ast import literal_eval
 from string import punctuation
 from sys import path
+from time import perf_counter
 from celery import Celery
 from typing import Literal, Any
-from re import findall, fullmatch, match, search, split, sub, subn
+from re import finditer, fullmatch, match, search, split, sub, subn
 from anytree import Node, LevelOrderGroupIter, RenderTree
+from decimal import Decimal
 import datetime
 
 try:
@@ -56,7 +58,6 @@ def get_natively_mapped_functions(originDBType: Literal["mysql", "sqlite3", "pos
             "COUNT": "COUNT({0})",
             "DATE": ("DATE({0})", "DATE"),
             "DATETIME": "DATETIME({0})",
-            "ENUM": "TEXT",
             "FLOAT": ("FLOAT({0}, {1})", "FLOAT({0})"),
             "IFNULL": "IFNULL({0}, {1})",
             "INSTR": "INSTR({0}, {1})",
@@ -189,6 +190,7 @@ def get_non_natively_mapped_functions(originDBType: Literal["mysql", "sqlite3", 
             "BIT_LENGTH": "LENGTH(HEX({0})) * 4",
             "CONCAT": "{argsWithConcOperator}",
             "CONCAT_WS": "group_concat(mockGroup, {0}) FROM ({selectWithAllItems})",
+            "ENUM": "TEXT",
             "FIELD": "WITH RECURSIVE indexes(idx, str) AS (SELECT 0, {stringWithOneExtraDelim} UNION ALL SELECT idx + INSTR(str, ','), SUBSTR(str, INSTR(str, ',') + 1) FROM indexes WHERE str LIKE '%,%') SELECT COUNT(*) FROM indexes AS elem_index WHERE idx > 0 AND idx < instr({stringWithOneExtraDelim}, {0})",
             "FIND_IN_SET": "WITH RECURSIVE indexes(idx, str) AS (SELECT 0, {1} UNION ALL SELECT idx + INSTR(str, ','), SUBSTR(str, INSTR(str, ',') + 1) FROM indexes WHERE str LIKE '%,%') SELECT COUNT(*) FROM indexes AS elem_index WHERE idx > 0 AND idx < instr({1}, {0})",
             "HEX": r"HEX({0}) OR PRINTF('%x', {0})",
@@ -310,7 +312,7 @@ def build_function_and_argument_nodes(funcString: str, parentNode: Node) -> None
     i = 0
     for func, argList in zip(funcs, args):
         correctedFunc = func[0].split(" ")[-1].strip()
-        newNode = Node(name= f'{i}', parent= parentNode, function= correctedFunc, oldArgs= '; '.join(arg.strip() for arg in argList), newArgs= ';'.join(arg.strip() for arg in argList), maxReachedLevel= maxReachedLevel, adaptation=None)
+        newNode = Node(name= f'{i}', parent= parentNode, function= correctedFunc, oldArgs= ';'.join(arg.strip() for arg in argList), newArgs= ';'.join(arg.strip() for arg in argList), maxReachedLevel= maxReachedLevel, adaptation=None)
         i += 1
 
 def adapt_functions_tree_to_sqlite3(funcTree: Node, originDBType: Literal["mysql", "postgresql", "mongodb"]) -> Node:
@@ -331,7 +333,7 @@ def adapt_functions_tree_to_sqlite3(funcTree: Node, originDBType: Literal["mysql
                     childOldArgs = f"{child.oldArgs.replace(';', ',')}"
                     funcNode.newArgs = funcNode.newArgs.replace(f"{child.function}({childOldArgs})", 
                                                                 f"{child.adaptation}")
-                
+        
     return funcTree
 
 def adapt_defaults_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"]) -> str:
@@ -365,19 +367,29 @@ def create_table_insert_statement_for_sqlite3(tableRows: 'list[str]', originDBTy
         correctedRowList = []
         
         for tableRow in tableRows[1::]:
+            '''rowList = list(literal_eval(tableRow)[0])
+            
+            for i, value in enumerate(rowList):
+                if isinstance(value, datetime.datetime):
+                    rowList[i] = eval(value)'''
+            
             correctedRowList.append(f"({literal_eval(tableRow)[0]})".replace("'NULL'", "NULL"))
             
         jointValues = ",".join(rowStr for rowStr in correctedRowList)
     
     else:
+        for i, tableRow in enumerate(tableRows):
+            if i != 0:
+                aux = list(eval(tableRow))
+                aux = [str(value) if any([isinstance(value, datetime.date), 
+                                          isinstance(value, datetime.datetime), 
+                                          isinstance(value, datetime.time), 
+                                          isinstance(value, Decimal)]) else value for value in aux]
+                tableRows[i] = str(tuple(aux))
+        
         jointValues = ','.join(tableRow.replace("'NULL'", "NULL") for tableRow in tableRows[1::])
 
     insertStatement = f"INSERT INTO {tableName} {colNames} VALUES {jointValues};"
-    insertStatement = sub(r"Decimal\('([^']+)'\)", r"'\1'", insertStatement)
-    datetimeObjs = findall(r"(datetime.\w+\(.*?\))", insertStatement)
-    
-    for datetimeObj in datetimeObjs:
-        insertStatement = insertStatement.replace(datetimeObj, str(eval(datetimeObj)))
 
     requestParams.update({"originDbType": originDBType})
     

@@ -1,4 +1,4 @@
-from asyncio import StreamReader, StreamWriter, Queue, run, gather, start_server
+from asyncio import StreamReader, StreamWriter, Queue, run, gather, start_server, QueueEmpty, wait_for, TimeoutError
 from pickle import dumps, loads
 from sys import getsizeof, path
 from datetime import datetime
@@ -91,30 +91,34 @@ class ServerDataSenderAndReceiver():
         await self.awaitingRequests.put(request)
     
     async def read_conversion_request(self, reader: StreamReader, userID: str) -> bool:
-        rawRequestPackets = []
-            
-        while True:
-            requestPacket = await reader.read(1024)
-            rawRequestPackets.append(requestPacket)
-            
-            if str(requestPacket) == "b''":
-                await self.add_request_to_queue(
-                    {"id": None,
-                     "originDbType": None,
-                     "convertTo": None,
-                     "objectType": None,
-                     "body": "EOT"
-                    },
-                    None
-                )
-                return True
-
-            elif str(requestPacket)[-3:-1:] == "\\n":
-                break
+        try:
+            rawRequestPackets = []
                 
-        request = loads(b''.join(rawRequestPackets))
-        await self.add_request_to_queue(request, userID)
+            while True:
+                requestPacket = await wait_for(reader.read(1024), 0.01)
+                rawRequestPackets.append(requestPacket)
+                
+                if str(requestPacket) == "b''":
+                    await self.add_request_to_queue(
+                        {"id": None,
+                        "originDbType": None,
+                        "convertTo": None,
+                        "objectType": None,
+                        "body": "EOT"
+                        },
+                        None
+                    )
+                    return True
+
+                elif str(requestPacket)[-3:-1:] == "\#":
+                    break
+                    
+            request = loads(b''.join(rawRequestPackets))
+            await self.add_request_to_queue(request, userID)
         
+        except TimeoutError:
+            pass
+            
         return False
     
     async def process_request(self, dbConverter: Converter) -> None:
@@ -124,19 +128,30 @@ class ServerDataSenderAndReceiver():
                 await self.add_loggable_event_to_queue(*event)
     
     async def send_converted_response(self, writer: StreamWriter, userID: str) -> None:
-        processedRequest = await self.toSendQueue.get()
-
+        try:
+            processedRequest = self.toSendQueue.get_nowait()
+        except QueueEmpty:
+            return
+        
+        print("it got here")
+        
         if processedRequest["body"] == "EOT":
             return
+        
+        print("it kept going")
         
         serverInternalID = processedRequest["id"]
         processedRequest["id"] = serverInternalID.split("-")[1]
         pickledResponse = dumps(processedRequest)
+
+        print("it got here as well")
         
         writer.write(pickledResponse)
+        print("it wrote it")
+        writer.write(b"\#")
+        print("this too")
         await writer.drain()
-        writer.write(b"\n")
-        await writer.drain()
+        print("and here")
 
         await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Sucesfully sent request response", {"requestID": serverInternalID, "responseSize": f"{getsizeof(str(processedRequest))}B"})
     
@@ -151,9 +166,13 @@ class ServerDataSenderAndReceiver():
         
         while not endOfTransmission:            
             try:
+                print("stuck on read")
                 endOfTransmission = await self.read_conversion_request(reader, userID)
+                print("stuck on process")
                 await self.process_request(dbConverter)
+                print("stuck on send")
                 await self.send_converted_response(writer, userID)
+                print("not stuck")
 
             except (EOFError, ConnectionResetError):
                 await self.add_loggable_event_to_queue(datetime.now(), "ERR", "Unexpectedly lost connection with user", {"userID": userID})
