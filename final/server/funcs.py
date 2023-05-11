@@ -1,18 +1,20 @@
 from ast import literal_eval
+from os import getcwd
+from os.path import dirname
 from string import punctuation
 from sys import path
-from time import perf_counter
 from celery import Celery
-from typing import Literal, Any
-from re import finditer, fullmatch, match, search, split, sub, subn
-from anytree import Node, LevelOrderGroupIter, RenderTree
+from typing import Literal
+from re import fullmatch, sub
+from anytree import Node, LevelOrderGroupIter
 from decimal import Decimal
 import datetime
 
+baseDir = dirname(getcwd())
 try:
-    path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.index(baseDir)
 except ValueError:
-    path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.append(baseDir)
 
 from common.timeWrapper import time_excecution
 

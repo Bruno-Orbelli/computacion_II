@@ -1,5 +1,5 @@
 from ast import literal_eval
-from asyncio import Queue, QueueEmpty, sleep
+from asyncio import Queue, QueueEmpty
 from datetime import datetime
 from celery import group
 
@@ -60,10 +60,7 @@ class Converter():
         for _ in range(qSize):
             result = self.pendingResults.get_nowait()
             
-            print(result.ready())
-            
             if result.ready():
-                print("it got into")
                 resultsToAdd.extend(result.get())
             else:
                 await self.pendingResults.put(result)
@@ -74,7 +71,6 @@ class Converter():
         processingEvents = []
         
         originalLen = len(processedData)
-        # print(originalLen)
         for i in range(originalLen - 1):
             try:
                 if processedData[i][0][1]["id"] == processedData[i + 1][0][1]["id"]:

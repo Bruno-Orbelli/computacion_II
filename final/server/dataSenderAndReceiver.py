@@ -2,13 +2,18 @@ from asyncio import StreamReader, StreamWriter, Queue, run, gather, start_server
 from pickle import dumps, loads
 from sys import getsizeof, path
 from datetime import datetime
-from os import getenv
+from os import getcwd, getenv
+from os.path import dirname
+from typing import Literal
 from dotenv import load_dotenv
+from functools import wraps
+from daemon import DaemonContext
 
+baseDir = dirname(getcwd())
 try:
-    path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.index(baseDir)
 except ValueError:
-    path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.append(baseDir)
 
 from converter import Converter
 from logger import ServerLogger
@@ -16,13 +21,15 @@ from common.exceptions import InitializationError
 
 class ServerDataSenderAndReceiver():
 
-    def __init__(self, daemon = False, logEnabled = True) -> None:
+    def __init__(self, daemon: bool = False, logEnabled: bool = True, IPProtocol: Literal[4, 6, 10] = 10) -> None:
         load_dotenv()
         self.serverIPV4 = ("SERVER_IPV4_ADDRESS", getenv("SERVER_IPV4_ADDRESS"))
         self.serverIPV4Port = ("SERVER_IPV4_PORT", getenv("SERVER_IPV4_PORT"))
+        self.serverIPV6 = ("SERVER_IPV6_ADDRESS", getenv("SERVER_IPV6_ADDRESS"))
+        self.serverIPV6Port = ("SERVER_IPV6_PORT", getenv("SERVER_IPV6_PORT"))
 
-        if None in (self.serverIPV4[1], self.serverIPV4Port[1]):
-            envVars = (self.serverIPV4, self.serverIPV4Port)
+        if None in (self.serverIPV4[1], self.serverIPV4Port[1], self.serverIPV6[1], self.serverIPV6Port[1]):
+            envVars = (self.serverIPV4, self.serverIPV4Port, self.serverIPV6, self.serverIPV6Port)
             envVarsStr = ", ".join(envVar[0] for envVar in envVars if envVar[1] is None)
             raise InitializationError(
                 f"Could not read environment variable{'s' if tuple(enVar[1] for enVar in envVars).count(None) > 1 else ''} {envVarsStr}. Check for any modifications in '.env'."
@@ -30,13 +37,18 @@ class ServerDataSenderAndReceiver():
         
         self.serverIPV4 = self.serverIPV4[1]
         self.serverIPV4Port = int(self.serverIPV4Port[1])
+        self.serverIPV6 = self.serverIPV6[1]
+        self.serverIPV6Port = int(self.serverIPV6Port[1])
         
         self.clientPrefixTable = {}
-        self.daemon = daemon  # Flag especificada en el argparse del init.py principal
-        self.logEnabled = logEnabled  # Flag especificada en el argparse del init.py principal
+        
+        self.daemon = daemon
+        self.logEnabled = logEnabled
+        self.serverIPProtocol = IPProtocol
         
         self.awaitingRequests = Queue()
         self.toSendQueue = Queue()
+        self.requestPacketsState = []
 
         self.logger = ServerLogger()
     
@@ -46,10 +58,20 @@ class ServerDataSenderAndReceiver():
     def get_port(self) -> int:
         return self.serverIPV4Port
     
-    async def add_loggable_event_to_queue(self, datetime: datetime, typeOfEntry: str, message: str, context: dict):
+    def check_logging_enabled(self, func: 'function') -> function:
+        @wraps(func)
+        def wrap(*args, **kwargs):
+            if self.logEnabled:
+                func(*args, **kwargs)
+            return
+        return wrap
+    
+    @check_logging_enabled
+    async def add_loggable_event_to_queue(self, datetime: datetime, typeOfEntry: str, message: str, context: dict) -> None:
         await self.logger.add_event_to_queue((datetime, typeOfEntry, message, context))
     
-    async def log_pending_events(self):
+    @check_logging_enabled
+    async def log_pending_events(self) -> None:
         await self.logger.log_events()
     
     async def get_prefix_from_table(self, clientIP: str) -> str:
@@ -92,28 +114,9 @@ class ServerDataSenderAndReceiver():
     
     async def read_conversion_request(self, reader: StreamReader, userID: str) -> bool:
         try:
-            rawRequestPackets = []
-                
-            while True:
-                requestPacket = await wait_for(reader.read(1024), 0.01)
-                rawRequestPackets.append(requestPacket)
-                
-                if str(requestPacket) == "b''":
-                    await self.add_request_to_queue(
-                        {"id": None,
-                        "originDbType": None,
-                        "convertTo": None,
-                        "objectType": None,
-                        "body": "EOT"
-                        },
-                        None
-                    )
-                    return True
-
-                elif str(requestPacket)[-3:-1:] == "\#":
-                    break
-                    
-            request = loads(b''.join(rawRequestPackets))
+            sizeToRead = int(str(await wait_for(reader.readexactly(32), 0.01))[2:-1:])
+            requestPacket = await reader.readexactly(sizeToRead)
+            request = loads(requestPacket)
             await self.add_request_to_queue(request, userID)
         
         except TimeoutError:
@@ -127,31 +130,24 @@ class ServerDataSenderAndReceiver():
             for event in processingEvents:
                 await self.add_loggable_event_to_queue(*event)
     
-    async def send_converted_response(self, writer: StreamWriter, userID: str) -> None:
+    async def send_converted_response(self, writer: StreamWriter) -> None:
         try:
             processedRequest = self.toSendQueue.get_nowait()
         except QueueEmpty:
             return
         
-        print("it got here")
-        
         if processedRequest["body"] == "EOT":
             return
-        
-        print("it kept going")
         
         serverInternalID = processedRequest["id"]
         processedRequest["id"] = serverInternalID.split("-")[1]
         pickledResponse = dumps(processedRequest)
-
-        print("it got here as well")
         
+        requestSize = len(pickledResponse)
+        sizeToRead = bytes(str(requestSize).zfill(32), 'utf-8')
+        writer.write(sizeToRead)
         writer.write(pickledResponse)
-        print("it wrote it")
-        writer.write(b"\#")
-        print("this too")
         await writer.drain()
-        print("and here")
 
         await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Sucesfully sent request response", {"requestID": serverInternalID, "responseSize": f"{getsizeof(str(processedRequest))}B"})
     
@@ -166,13 +162,9 @@ class ServerDataSenderAndReceiver():
         
         while not endOfTransmission:            
             try:
-                print("stuck on read")
                 endOfTransmission = await self.read_conversion_request(reader, userID)
-                print("stuck on process")
                 await self.process_request(dbConverter)
-                print("stuck on send")
-                await self.send_converted_response(writer, userID)
-                print("not stuck")
+                await self.send_converted_response(writer)
 
             except (EOFError, ConnectionResetError):
                 await self.add_loggable_event_to_queue(datetime.now(), "ERR", "Unexpectedly lost connection with user", {"userID": userID})
@@ -187,28 +179,49 @@ class ServerDataSenderAndReceiver():
         return
     
     async def start_and_serve(self) -> None:       
-        while True:
-            try:
-                server = await start_server(self.handle_conversion_requests, self.serverIPV4, self.serverIPV4Port)
-            
-            except OSError:
-                await self.add_loggable_event_to_queue(datetime.now(), "WARN", "Could not start server: address already in use", {"rejectedAddress": (self.serverIPV4, self.serverIPV4Port)})
-                self.serverIPV4Port += 2
-                await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Retrying server initialization", {"newAddress": (self.serverIPV4, self.serverIPV4Port)})
-                await self.log_pending_events()
-                continue
-            
-            async with server:
-                await gather(
-                    self.add_loggable_event_to_queue(datetime.now(), "INFO", "Server is up and running", {"serverAddress": (self.serverIPV4, self.serverIPV4Port)}),
-                    self.log_pending_events(),
-                    server.serve_forever()
-                    )
+        if self.IPVProtocol in (4, 10):
+            while True:
+                try:
+                    serverIPv4 = await start_server(self.handle_conversion_requests, self.serverIPV4, self.serverIPV4Port)
+                    break
+                
+                except OSError:
+                    await self.add_loggable_event_to_queue(datetime.now(), "WARN", "Could not start server: address already in use", {"rejectedAddress": (self.serverIPV4, self.serverIPV4Port)})
+                    self.serverIPV4Port += 2
+                    await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Retrying server initialization", {"newAddress": (self.serverIPV4, self.serverIPV4Port)})
+                    await self.log_pending_events()
+                    continue
+        
+        if self.IPVProtocol in (6, 10):
+            while True:
+                try:
+                    serverIPv6 = await start_server(self.handle_conversion_requests, self.serverIPV6, self.serverIPV6Port)
+                
+                except OSError:
+                    await self.add_loggable_event_to_queue(datetime.now(), "WARN", "Could not start server: address already in use", {"rejectedAddress": (self.serverIPV6, self.serverIPV6Port)})
+                    self.serverIPV4Port += 2
+                    await self.add_loggable_event_to_queue(datetime.now(), "INFO", "Retrying server initialization", {"newAddress": (self.serverIPV6, self.serverIPV6Port)})
+                    await self.log_pending_events()
+                    continue
+                
+                async with serverIPv4, serverIPv6:
+                    await gather(
+                        self.add_loggable_event_to_queue(datetime.now(), "INFO", "Server is up and running", {"serverAddress": (self.serverIPV4, self.serverIPV4Port)}),
+                        self.add_loggable_event_to_queue(datetime.now(), "INFO", "Server is up and running", {"serverAddress": (self.serverIPV6, self.serverIPV6Port)}),
+                        self.log_pending_events(),
+                        serverIPv4.serve_forever(),
+                        serverIPv6.serve_forever()
+                        )
 
-async def main():
+async def main() -> None:
     try:
         server = ServerDataSenderAndReceiver()
-        await server.start_and_serve()
+        if server.daemon:
+            with DaemonContext():
+                await server.start_and_serve()
+        
+        else:
+            await server.start_and_serve()
     
     except Exception as e:
         externalLogger = ServerLogger()
@@ -223,7 +236,7 @@ async def main():
 
         exit(1)
 
-async def on_close(e: 'Exception'):
+async def on_close() -> None:
     externalLogger = ServerLogger()
     await externalLogger.add_event_to_queue((datetime.now(), "INFO", "Server shutdown with KeyboardInterrupt", {}))
     await externalLogger.log_events() 
