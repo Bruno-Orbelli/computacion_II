@@ -1,11 +1,13 @@
 import pyodbc
+from os import getcwd
 from os.path import dirname, isfile, exists
 from sys import path
 
+baseDir = dirname(getcwd())
 try:
-    path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.index(baseDir)
 except ValueError:
-    path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.append(baseDir)
 
 from common.connectionData import drivers, connStrs
 from common.exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError

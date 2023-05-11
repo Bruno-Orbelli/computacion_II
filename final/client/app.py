@@ -1,7 +1,7 @@
 from asyncio import run
 from dotenv import load_dotenv
-from os import getenv
-from os.path import basename
+from os import getcwd, getenv
+from os.path import dirname, basename
 from re import fullmatch, split as resplit
 from argparse import ArgumentParser, Namespace
 from getpass import getpass
@@ -18,10 +18,11 @@ from asyncReader import SQLDatabaseReader, MongoDatabaseReader
 from asyncWriter import SQLDatabaseWriter, MongoDatabaseWriter
 from dataSenderAndReceiver import ClientDataSenderAndReceiver
 
+baseDir = dirname(getcwd())
 try:
-    path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.index(baseDir)
 except ValueError:
-    path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.append(baseDir)
 
 from common.exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError
 from common.connectionData import mainDbName
@@ -47,7 +48,7 @@ class CommandLineInterface():
         self.nestedViewItLimit = int(self.nestedViewItLimit[1])
         self.alreadyExistDbBehaviour = self.alreadyExistDbBehaviour[1]
     
-    def parse_flags(self) -> Namespace:
+    def parse_flags(self) -> Namespace: # moverlo al init principal
         argParser = ArgumentParser(
             description= """
             Command line application for migrating SQL and NoSQL database files to another SQL or NoSQL format, or converting specific tables/collections/views/
@@ -61,7 +62,7 @@ class CommandLineInterface():
         
         return argParser.parse_args()
     
-    async def main(self):
+    async def main(self) -> None:
         title = Figlet("larry3d")
         print(title.renderText("ConverSQL"))
         sleep(2)
@@ -91,7 +92,7 @@ class CommandLineInterface():
             pass
 
         try:
-            connArgs = await self.attempt_db_connection(destinationArgs, writer)
+            await self.attempt_db_connection(destinationArgs, writer)
             if self.alreadyExistDbBehaviour == "default":
                 print("\n" + Fore.RED + f"> Database already exists. If you want to overwrite or modify it, you must change .env configurations.\n")
                 exit(1)
@@ -102,7 +103,7 @@ class CommandLineInterface():
                     destinationArgs["dbName"] = mainDbName[destinationArgs["dbType"]]
                 
                     try:
-                        connArgs = await self.attempt_db_connection(destinationArgs, writer)                            
+                        await self.attempt_db_connection(destinationArgs, writer)                            
                         
                     except (ArgumentError, ExecutionError, UnsupportedDBTypeError, ConnectionError) as e:
                         print("\n" + Fore.RED + f"> {e}\n")
@@ -132,6 +133,7 @@ class CommandLineInterface():
         await self.write_objects(writer, responses, destinationArgs)
 
         print("\n" + Fore.GREEN + "> Database migration successful.")
+        print()
      
     def get_database_format(self) -> str:
         dbFormat = None
@@ -275,7 +277,7 @@ class CommandLineInterface():
         print(Fore.GREEN + "> Connection established.")
         return deepcopy(connArgs)
     
-    async def select_objects_to_migrate(self, connArgs: 'dict[str, str]', reader: 'SQLDatabaseReader | MongoDatabaseReader'):
+    async def select_objects_to_migrate(self, connArgs: 'dict[str, str]', reader: 'SQLDatabaseReader | MongoDatabaseReader') -> dict:
         newArgs = await self.attempt_db_connection(connArgs, reader)
         objectsToMigrate = {}
         
@@ -315,7 +317,7 @@ class CommandLineInterface():
     
         return objectsToMigrate
                
-    def build_available_objects(self, availableObjects: 'list[tuple[str]]', objectType: str, selectedTablesOrCollections: 'list[str]'):
+    def build_available_objects(self, availableObjects: 'list[tuple[str]]', objectType: str, selectedTablesOrCollections: 'list[str]') -> list:
         typeSpecificAvailableObjects = [obj for obj in availableObjects if obj[0] == objectType]
         nonTableOrCollection = [obj for obj in availableObjects if obj[0] not in ('table', 'collection')]
         
@@ -339,7 +341,7 @@ class CommandLineInterface():
         
         return typeSpecificAvailableObjects
     
-    def display_available_objects_and_get_input(self, rawAvailableObjects: 'list[tuple[str]]', objectType: str, dbName: str, selectedTablesOrCollections: 'list[str]' = None):
+    def display_available_objects_and_get_input(self, rawAvailableObjects: 'list[tuple[str]]', objectType: str, dbName: str, selectedTablesOrCollections: 'list[str]' = None) -> list:
         availableObjects = self.build_available_objects(rawAvailableObjects, objectType, selectedTablesOrCollections)
         
         if not availableObjects:
@@ -362,7 +364,7 @@ class CommandLineInterface():
         
         return self.get_object_names_with_limit_offset_skip(availableObjects, objectType, selectedTablesOrCollections)        
              
-    def get_object_names_with_limit_offset_skip(self, availableObjects: 'list[str]', objectType: Literal["table", "collection", "view", "index"], selectedTablesOrCollections: 'list[str]' = None):
+    def get_object_names_with_limit_offset_skip(self, availableObjects: 'list[str]', objectType: Literal["table", "collection", "view", "index"], selectedTablesOrCollections: 'list[str]' = None) -> list:
         selectedObjectNames, selectedObjects = [], []
         receivedInput, limit, offsetOrSkip = None, None, None
 
@@ -458,7 +460,7 @@ class CommandLineInterface():
 
         return readData
     
-    async def send_requests_and_get_response(self, senderReceiver: ClientDataSenderAndReceiver, dataToSend: 'list[tuple]', originArgs: 'dict[str, str]', destinationArgs: 'dict[str, str]'):
+    async def send_requests_and_get_response(self, senderReceiver: ClientDataSenderAndReceiver, dataToSend: 'list[tuple]', originArgs: 'dict[str, str]', destinationArgs: 'dict[str, str]') -> list:
         for objTuple in dataToSend:
             objType, objList = objTuple
             for objDict in objList:
@@ -467,7 +469,7 @@ class CommandLineInterface():
         responses = await senderReceiver.connect_and_run()
         return responses
     
-    async def write_objects(self, writer: 'SQLDatabaseWriter | MongoDatabaseWriter', responsePackets: 'list[dict]', destinationArgs: 'dict[str, str]'):
+    async def write_objects(self, writer: 'SQLDatabaseWriter | MongoDatabaseWriter', responsePackets: 'list[dict]', destinationArgs: 'dict[str, str]') -> None:
         dbType, dbPath = destinationArgs["dbType"], destinationArgs["dbPath"]
         auxArgs = deepcopy(destinationArgs)
         auxArgs.pop("dbType")
@@ -496,11 +498,13 @@ class CommandLineInterface():
         
         for statementTuple in (("table", tableOrCollectionStatements), ("view", viewStatements), ("index", indexStatements)):
             objType, statementList = statementTuple
-            await writer.connect_and_load_data(dbType, objType, statementList, dbPath, auxArgs)
+            await writer.connect_and_write_data(dbType, objType, statementList, dbPath, auxArgs)
             progressBar.update(len(statementList))
                
-            
 if __name__ == "__main__":
     cli = CommandLineInterface()
-    run(cli.main())
+    try:
+        run(cli.main())
+    except KeyboardInterrupt:
+        print("\nExit with keyboard interrupt.\n")
         

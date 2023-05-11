@@ -1,19 +1,21 @@
 import pyodbc
 from dotenv import load_dotenv
-from os import getenv
+from os import getcwd, getenv, remove
+from os.path import dirname
+from shutil import move
 from os.path import dirname
 from subprocess import Popen, PIPE
 from asyncio import create_task, gather, run
 from sys import path
 
+baseDir = dirname(getcwd())
 try:
-    path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.index(baseDir)
 except ValueError:
-    path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.append(baseDir)
 
 from baseAcceser import SQLDatabaseAcceser
 
-from common.queries import SQLDbStructureQueries, SQLObjectsNameQueries, SQLDataQueries, SQLViewQueries, SQLIndexQueries, mongodbAvailableQueryElems
 from common.connectionData import mainDbName
 from common.exceptions import ExecutionError, ConnectionError, UnsupportedDBTypeError, ArgumentError, InitializationError
 
@@ -36,7 +38,14 @@ class SQLDatabaseWriter(SQLDatabaseAcceser):
     
     async def connect_and_create_database(self, dbType: str, dbPath: str = None, connectionParams: dict = None) -> None:
         if dbType == "sqlite3": # Evitar sobreescribir el archivo si ya existe
+            if self.alreadyExistentBehaviour == "overwrite":
+                try:
+                    move(connectionParams['dbPath'], "../del")
+                except FileNotFoundError:
+                    pass
+            
             process = Popen(f"cd {dirname(dbPath)}; touch {connectionParams['dbName']}", stdout= PIPE, stderr= PIPE, shell= True)  # Variables de entorno
+            
             if process.communicate()[1]:
                 raise ExecutionError(
                     f"Failed to create database file '{connectionParams['dbName']}', check for any incorrect arguments or missing permissions."
@@ -74,7 +83,7 @@ class SQLDatabaseWriter(SQLDatabaseAcceser):
             ]
         return tasks
     
-    async def connect_and_load_data(self, dbType: str, objectType: str, statementList: 'list[tuple | str]', dbPath: str = None, connectionParams: dict = None) -> None:
+    async def connect_and_write_data(self, dbType: str, objectType: str, statementList: 'list[tuple | str]', dbPath: str = None, connectionParams: dict = None) -> None:
         taskFunctions = {
             "table": self.create_table_tasks,
             "view": self.create_view_or_index_tasks,
@@ -96,9 +105,23 @@ class SQLDatabaseWriter(SQLDatabaseAcceser):
                 
                 cursor.commit()
                 cursor.close()
+            
+            if self.alreadyExistentBehaviour == "overwrite":
+                if dbType == "sqlite3":
+                    try:
+                        remove(f"../del/{connectionParams['dbName']}")
+                    except FileNotFoundError:
+                        pass
         
-        except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError) as e:
-            raise e
+        except (ArgumentError, ConnectionError, ExecutionError, UnsupportedDBTypeError, pyodbc.Error) as e:
+            if isinstance(e, pyodbc.Error):
+                if self.alreadyExistentBehaviour == "append":
+                    raise ExecutionError(f"There is at least one object matching in name with an already existent entity in '{connectionParams['dbname']}'.")
+                elif self.alreadyExistentBehaviour == "append-and-replace":
+                    pass
+            
+            else:
+                raise e
 
     # Verificar orden de escritura para views anidadas
 

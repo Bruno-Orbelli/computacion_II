@@ -1,13 +1,16 @@
 import pyodbc, pymongo
 from subprocess import Popen, PIPE
-from asyncio import Future, create_task, gather, run
+from asyncio import Future, create_task, gather
+from os import getcwd
+from os.path import dirname
 from re import findall
 from sys import path
 
+baseDir = dirname(getcwd())
 try:
-    path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.index(baseDir)
 except ValueError:
-    path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.append(baseDir)
     
 from baseAcceser import SQLDatabaseAcceser
 
@@ -432,22 +435,3 @@ class MongoDatabaseReader():
         return {
             indexName: indexData[indexName]
         }
-
-if __name__ == "__main__":
-    mongoReader = MongoDatabaseReader()
-    sqlReader = SQLDatabaseReader()
-    # print(run(sqlReader.connect_and_read_data("postgresql", None, {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, ("table", {"actor": None}))))
-    
-    '''print(run(sqlReader.sql_connect_and_read(
-        dbType= "sqlite3", 
-        dbPath= "/home/brunengo/Escritorio/Proshecto/northwind.db", 
-        connectionParams= {"user": "dbdummy", "password": "sql", "host": "localhost", "dbName": "dvdrental", "port": 5433}, 
-        readParams= ("table", {"Customers": None})
-        )))'''
-    
-    data = run(sqlReader.connect_and_read_data("mysql", None,
-        connectionParams= {"user": "DBDummy", "password": "sql", "host": "localhost", "dbName": "classicmodels", "port": 3306},
-        readParams= ("table", {"customers": (None, None), "employees": (None, None)})
-        ))
-    print(type(data))
-    print(data)

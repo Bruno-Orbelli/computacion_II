@@ -1,28 +1,33 @@
 from asyncio import Queue, QueueEmpty, StreamReader, StreamWriter, TimeoutError, open_connection, wait_for
 from pickle import dumps, loads
 from sys import path
-from os import getenv
+from os import getcwd, getenv
+from os.path import dirname
+from typing import Literal
 from dotenv import load_dotenv
 from tqdm import tqdm
 
+baseDir = dirname(getcwd())
 try:
-    path.index('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.index(baseDir)
 except ValueError:
-    path.append('/home/brunengo/Escritorio/Computación II/computacion_II/final')
+    path.append(baseDir)
 
 from common.exceptions import InitializationError, ConnectionError
 
 class ClientDataSenderAndReceiver():
 
-    def __init__(self) -> None:
+    def __init__(self, preferedIPProtocol: Literal[4, 6] = 4) -> None:
         load_dotenv()
         self.serverIPV4 = ("SERVER_IPV4_ADDRESS", getenv("SERVER_IPV4_ADDRESS"))
         self.serverIPV4Port = ("SERVER_IPV4_PORT", getenv("SERVER_IPV4_PORT"))
+        self.serverIPV6 = ("SERVER_IPV6_ADDRESS", getenv("SERVER_IPV6_ADDRESS"))
+        self.serverIPV6Port = ("SERVER_IPV6_PORT", getenv("SERVER_IPV6_PORT"))
         self.serverConnTimeout = ("SERVER_CONNECTION_TIMEOUT", getenv("SERVER_CONNECTION_TIMEOUT"))
         self.clientRetryAttempts = ("CLIENT_RETRY_ATTEMPTS", getenv("CLIENT_RETRY_ATTEMPTS"))
 
-        if None in (self.serverIPV4[1], self.serverIPV4Port[1], self.serverConnTimeout[1], self.clientRetryAttempts[1]):
-            envVars = (self.serverIPV4, self.serverIPV4Port, self.serverConnTimeout, self.clientRetryAttempts)
+        if None in (self.serverIPV4[1], self.serverIPV4Port[1], self.serverIPV6[1], self.serverIPV6Port[1], self.serverConnTimeout[1], self.clientRetryAttempts[1]):
+            envVars = (self.serverIPV4, self.serverIPV4Port, self.serverIPV6, self.serverIPV6Port, self.serverConnTimeout, self.clientRetryAttempts)
             envVarsStr = ", ".join(envVar[0] for envVar in envVars if envVar[1] is None)
             raise InitializationError(
                 f"Could not read environment variable{'s' if tuple(enVar[1] for enVar in envVars).count(None) > 1 else ''} {envVarsStr}. Check for any modifications in '.env'."
@@ -30,22 +35,35 @@ class ClientDataSenderAndReceiver():
         
         self.serverIPV4 = self.serverIPV4[1]
         self.serverIPV4Port = int(self.serverIPV4Port[1])
+        self.serverIPV6 = self.serverIPV6[1]
+        self.serverIPV6Port = int(self.serverIPV6Port[1])
         self.serverConnTimeout = float(self.serverConnTimeout[1])
         self.clientRetryAttempts = int(self.clientRetryAttempts[1])
         self.retryCounter = self.clientRetryAttempts
+
+        self.clientPrefIPProtcol = preferedIPProtocol
         
         self.requestID = 0
         self.toSendQueue = Queue()
         self.toReceiveList = []
+        self.connectedTo = None
     
     async def connect_and_run(self) -> list:       
-        try:
-            reader, writer = await wait_for(open_connection(self.serverIPV4, self.serverIPV4Port), timeout= self.serverConnTimeout)
+        ipsAndPorts = [(self.serverIPV4, self.serverIPV4Port), (self.serverIPV6, self.serverIPV6Port)]
         
-        except (ConnectionRefusedError, TimeoutError):
-            raise ConnectionError(
-                f"Failed to connect to conversion server at '{self.serverIPV4}:{self.serverIPV4Port}'. Ensure server is up and running at that address."
-                )
+        if self.clientPrefIPProtcol == 6:
+            ipsAndPorts.reverse()
+        
+        for i, ipWithPort in enumerate(ipsAndPorts):
+            try:
+                reader, writer = await wait_for(open_connection(ipWithPort[0], ipWithPort[1]), timeout= self.serverConnTimeout)
+                self.connectedTo = ipWithPort
+                
+            except (ConnectionRefusedError, TimeoutError):
+                if i == 1:
+                    raise ConnectionError(
+                        f"Failed to connect to conversion server at both '{self.serverIPV4}:{self.serverIPV4Port}' and '{self.serverIPV6}:{self.serverIPV6Port}'. Ensure server is up and running at one of those addresses."
+                        )
 
         responses = []
         sendProgress = tqdm(desc= "Sending conversion requests...", total= len(self.toReceiveList), colour= "green", position= 0, leave= True)
@@ -59,9 +77,7 @@ class ClientDataSenderAndReceiver():
             except QueueEmpty:
                 pass
 
-            print("stuck on response")
             await self.get_response_and_append(responses, reader, receiveProgress)
-            print("not stuck")
         
         writer.close()
         await writer.wait_closed()
@@ -91,30 +107,21 @@ class ClientDataSenderAndReceiver():
             return
         
         pickledRequest = dumps(request)
+        requestSize = len(pickledRequest)
+        sizeToRead = bytes(str(requestSize).zfill(32), 'utf-8')
+        
+        writer.write(sizeToRead)
         writer.write(pickledRequest)
         await writer.drain()
-            
-        writer.write(b'\#')
-        await writer.drain()
+        
         progressBar.update(1)
-
-        # Agregar una opción de retry?
-
+    
     async def receive_conversion_response(self, reader: StreamReader, progressBar: tqdm) -> dict:
         try:
-            rawResponsePackets = []
-            
-            while True:
-                print("into the loop")
-                requestPacket = await reader.read(1024)
-                print("read a packet")
-                rawResponsePackets.append(requestPacket)
-                self.retryCounter = self.clientRetryAttempts
+            sizeToRead = int(str(await wait_for(reader.readexactly(32), 0.01))[2:-1:])
+            requestPacket = await reader.readexactly(sizeToRead)
                 
-                if str(requestPacket)[-3:-1:] == "\#":
-                    break
-                
-            response = loads(b''.join(rawResponsePackets))
+            response = loads(requestPacket)
             self.toReceiveList.remove(int(response["id"]))
             progressBar.update(1)
 
@@ -124,14 +131,14 @@ class ClientDataSenderAndReceiver():
                 
                 if self.retryCounter == 0:
                     raise ConnectionError(
-                        f"No response from conversion server at '{self.serverIPV4}:{self.serverIPV4Port}' after {0.1 * self.clientRetryAttempts}s. Ensure server is still up and try again."
+                        f"No response from conversion server at '{self.connectedTo[0]}:{self.connectedTo[1]}' after {0.01 * self.clientRetryAttempts}s. Ensure server is still up and try again."
                         )
 
                 return
 
             else:
                 raise ConnectionError(
-                    f"Connection with conversion server at '{self.serverIPV4}:{self.serverIPV4Port}' has been lost. Ensure server is still up and try again."
+                    f"Connection with conversion server at '{self.connectedTo[0]}:{self.connectedTo[1]}' has been lost. Ensure server is still up and try again."
                 )
         
         return response
