@@ -6,8 +6,6 @@ from os import getcwd, getenv
 from os.path import dirname
 from typing import Literal
 from dotenv import load_dotenv
-from functools import wraps
-from daemon import DaemonContext
 
 baseDir = dirname(getcwd())
 try:
@@ -21,30 +19,29 @@ from common.exceptions import InitializationError
 
 class ServerDataSenderAndReceiver():
 
-    def __init__(self, daemon: bool = False, logEnabled: bool = True, IPProtocol: Literal[4, 6, 10] = 10) -> None:
+    def __init__(self) -> None:
         load_dotenv()
-        self.serverIPV4 = ("SERVER_IPV4_ADDRESS", getenv("SERVER_IPV4_ADDRESS"))
         self.serverIPV4Port = ("SERVER_IPV4_PORT", getenv("SERVER_IPV4_PORT"))
-        self.serverIPV6 = ("SERVER_IPV6_ADDRESS", getenv("SERVER_IPV6_ADDRESS"))
         self.serverIPV6Port = ("SERVER_IPV6_PORT", getenv("SERVER_IPV6_PORT"))
+        self.logEnabled = ("SERVER_LOG_ENABLED", getenv("SERVER_LOG_ENABLED"))
+        self.serverIPProto = ("SERVER_IP_PROTOCOL", getenv("SERVER_IP_PROTOCOL"))
 
-        if None in (self.serverIPV4[1], self.serverIPV4Port[1], self.serverIPV6[1], self.serverIPV6Port[1]):
-            envVars = (self.serverIPV4, self.serverIPV4Port, self.serverIPV6, self.serverIPV6Port)
+        if None in (self.serverIPV4Port[1], self.serverIPV6Port[1], self.logEnabled[1], self.serverIPProto[1]):
+            envVars = (self.serverIPV4Port, self.serverIPV6Port, self.logEnabled, self.serverIPProto)
             envVarsStr = ", ".join(envVar[0] for envVar in envVars if envVar[1] is None)
             raise InitializationError(
                 f"Could not read environment variable{'s' if tuple(enVar[1] for enVar in envVars).count(None) > 1 else ''} {envVarsStr}. Check for any modifications in '.env'."
                 )
         
-        self.serverIPV4 = self.serverIPV4[1]
         self.serverIPV4Port = int(self.serverIPV4Port[1])
-        self.serverIPV6 = self.serverIPV6[1]
         self.serverIPV6Port = int(self.serverIPV6Port[1])
+        self.logEnabled = bool(self.logEnabled[1])
+        self.serverIPProto = int(self.serverIPProto[1])
         
         self.clientPrefixTable = {}
         
-        self.daemon = daemon
-        self.logEnabled = logEnabled
-        self.serverIPProtocol = IPProtocol
+        self.serverIPV4 = "0.0.0.0"
+        self.serverIPV6 = "::"
         
         self.awaitingRequests = Queue()
         self.toSendQueue = Queue()
@@ -57,20 +54,11 @@ class ServerDataSenderAndReceiver():
     
     def get_port(self) -> int:
         return self.serverIPV4Port
-    
-    def check_logging_enabled(self, func: 'function') -> function:
-        @wraps(func)
-        def wrap(*args, **kwargs):
-            if self.logEnabled:
-                func(*args, **kwargs)
-            return
-        return wrap
-    
-    @check_logging_enabled
+       
     async def add_loggable_event_to_queue(self, datetime: datetime, typeOfEntry: str, message: str, context: dict) -> None:
-        await self.logger.add_event_to_queue((datetime, typeOfEntry, message, context))
+        if self.logEnabled:
+            await self.logger.add_event_to_queue((datetime, typeOfEntry, message, context))
     
-    @check_logging_enabled
     async def log_pending_events(self) -> None:
         await self.logger.log_events()
     
@@ -114,7 +102,7 @@ class ServerDataSenderAndReceiver():
     
     async def read_conversion_request(self, reader: StreamReader, userID: str) -> bool:
         try:
-            sizeToRead = int(str(await wait_for(reader.readexactly(32), 0.01))[2:-1:])
+            sizeToRead = int(str(await wait_for(reader.readexactly(32), 0.001))[2:-1:])
             requestPacket = await reader.readexactly(sizeToRead)
             request = loads(requestPacket)
             await self.add_request_to_queue(request, userID)
@@ -179,7 +167,9 @@ class ServerDataSenderAndReceiver():
         return
     
     async def start_and_serve(self) -> None:       
-        if self.IPVProtocol in (4, 10):
+        serverIPv4, serverIPv6 = None, None
+        
+        if self.serverIPProto in (4, 10):
             while True:
                 try:
                     serverIPv4 = await start_server(self.handle_conversion_requests, self.serverIPV4, self.serverIPV4Port)
@@ -192,10 +182,11 @@ class ServerDataSenderAndReceiver():
                     await self.log_pending_events()
                     continue
         
-        if self.IPVProtocol in (6, 10):
+        if self.serverIPProto in (6, 10):
             while True:
                 try:
                     serverIPv6 = await start_server(self.handle_conversion_requests, self.serverIPV6, self.serverIPV6Port)
+                    break
                 
                 except OSError:
                     await self.add_loggable_event_to_queue(datetime.now(), "WARN", "Could not start server: address already in use", {"rejectedAddress": (self.serverIPV6, self.serverIPV6Port)})
@@ -204,25 +195,37 @@ class ServerDataSenderAndReceiver():
                     await self.log_pending_events()
                     continue
                 
-                async with serverIPv4, serverIPv6:
-                    await gather(
-                        self.add_loggable_event_to_queue(datetime.now(), "INFO", "Server is up and running", {"serverAddress": (self.serverIPV4, self.serverIPV4Port)}),
-                        self.add_loggable_event_to_queue(datetime.now(), "INFO", "Server is up and running", {"serverAddress": (self.serverIPV6, self.serverIPV6Port)}),
-                        self.log_pending_events(),
-                        serverIPv4.serve_forever(),
-                        serverIPv6.serve_forever()
-                        )
+        if serverIPv4 and serverIPv6:
+            async with serverIPv4, serverIPv6:
+                await gather(
+                    self.add_loggable_event_to_queue(datetime.now(), "INFO", "Server is up and running", {"serverAddress": (self.serverIPV4, self.serverIPV4Port)}),
+                    self.add_loggable_event_to_queue(datetime.now(), "INFO", "Server is up and running", {"serverAddress": (self.serverIPV6, self.serverIPV6Port)}),
+                    self.log_pending_events(),
+                    serverIPv4.serve_forever(),
+                    serverIPv6.serve_forever()
+                    )
+        
+        elif serverIPv4:
+            async with serverIPv4:
+                await gather(
+                    self.add_loggable_event_to_queue(datetime.now(), "INFO", "Server is up and running", {"serverAddress": (self.serverIPV4, self.serverIPV4Port)}),
+                    self.log_pending_events(),
+                    serverIPv4.serve_forever(),
+                    )
+        
+        else:
+            async with serverIPv6:
+                await gather(
+                    self.add_loggable_event_to_queue(datetime.now(), "INFO", "Server is up and running", {"serverAddress": (self.serverIPV6, self.serverIPV6Port)}),
+                    self.log_pending_events(),
+                    serverIPv6.serve_forever()
+                    )
 
 async def main() -> None:
     try:
         server = ServerDataSenderAndReceiver()
-        if server.daemon:
-            with DaemonContext():
-                await server.start_and_serve()
-        
-        else:
-            await server.start_and_serve()
-    
+        await server.start_and_serve()
+            
     except Exception as e:
         externalLogger = ServerLogger()
         
@@ -246,7 +249,7 @@ if __name__ == "__main__":
         run(main())
     
     except KeyboardInterrupt as e:
-        run(on_close(e))
+        run(on_close())
         exit(0)
     
 

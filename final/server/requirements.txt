@@ -1,0 +1,5 @@
+anytree==2.8.0
+python-dotenv==1.0.0
+redis==4.3.4
+celery==5.2.7
+setuptools==65.0.0

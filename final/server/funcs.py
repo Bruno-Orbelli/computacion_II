@@ -1,5 +1,7 @@
 from ast import literal_eval
 from os import getcwd
+from dotenv import load_dotenv
+from os import getenv
 from os.path import dirname
 from string import punctuation
 from sys import path
@@ -16,15 +18,30 @@ try:
 except ValueError:
     path.append(baseDir)
 
-from common.timeWrapper import time_excecution
+from common.wrappers import time_excecution
+from common.exceptions import InitializationError
+
+load_dotenv()
+brokerIp = ("BROKER_ADDRESS", getenv("BROKER_ADDRESS"))
+brokerPort = ("BROKER_PORT", getenv("BROKER_PORT"))
+
+if None in (brokerIp[1], brokerPort[1]):
+    envVars = (brokerIp, brokerPort)
+    envVarsStr = ", ".join(envVar[0] for envVar in envVars if envVar[1] is None)
+    raise InitializationError(
+        f"Could not read environment variable{'s' if tuple(enVar[1] for enVar in envVars).count(None) > 1 else ''} {envVarsStr}. Check for any modifications in '.env'."
+        )
+
+brokerIp = brokerIp[1].replace('"', '')
+brokerPort = int(brokerPort[1])
 
 app = Celery("funcs", 
-             broker="redis://localhost", 
-             backend="redis://localhost:6379", 
+             broker=f"redis://{brokerIp}", 
+             backend=f"redis://{brokerIp}:{brokerPort}", 
              task_serializer='json',
              result_serializer='json',
              accept_content = ['application/json']
-             )
+            )
 
 # Probar procesamiento con unidades de diferentes tamaños (diferentes chunks)
 
@@ -36,7 +53,9 @@ def get_syntax_substitutions(originDBType: Literal["mysql", "sqlite3", "postgres
             r'(\s|,)\`': r"\1[",
             r'\`(\s|,)': r"]\1",
             r'\(\`': "([",
-            r'\`\)': "])"
+            r'\`\)': "])",
+            r' DEFAULT ([^ \t\n\r\f\v,]+)([\s,])': r' DEFAULT(\1)\2',
+            r' UNIQUE KEY \[\w+\] (\(\[\w+\]\))': r' UNIQUE\1'
         },
         ("postgresql", "sqlite3"): {
             r'CREATE TABLE .*?\..*? \(': f"CREATE TABLE [{params['tableName']}] (",
@@ -338,10 +357,6 @@ def adapt_functions_tree_to_sqlite3(funcTree: Node, originDBType: Literal["mysql
         
     return funcTree
 
-def adapt_defaults_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"]) -> str:
-    if originDBType == "mysql":
-        return sub(r" DEFAULT ([^ \t\n\r\f\v,]+)([\s,])", r" DEFAULT(\1)\2", createStatement)
-
 @app.task
 @time_excecution
 def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType: Literal["mysql", "postgresql", "mongodb"], tableName: str, requestParams: 'dict[str, str]'):
@@ -357,7 +372,7 @@ def convert_table_create_statement_to_sqlite3(createStatement: str, originDBType
     requestParams.update({"originDbType": originDBType})
     createStatement = createStatement.replace(rf'{funcTree.oldArgs}', rf'{funcTree.newArgs}')
 
-    return (adapt_defaults_to_sqlite3(createStatement, originDBType), requestParams) 
+    return (createStatement, requestParams)
         
 @app.task
 @time_excecution

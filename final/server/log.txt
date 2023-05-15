@@ -1,2 +1,0 @@
-[2023-05-09 18:18:03.596508] INFO: Server is up and running {'serverAddress': ('localhost', 20111)}.
-[2023-05-09 18:18:03.596519] INFO: Server is up and running {'serverAddress': ('::1', 20112)}.
