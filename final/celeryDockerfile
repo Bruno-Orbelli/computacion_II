@@ -1,0 +1,13 @@
+FROM python:3.8.16-alpine3.17
+
+ARG SERVER_ALLOCATED_CORES
+ENV SERVER_ALLOCATED_CORES ${SERVER_ALLOCATED_CORES}
+
+WORKDIR /main
+
+COPY ./server ./.env ./
+COPY ./common ./common
+
+RUN pip install -r requirements.txt
+
+CMD celery -A funcs worker --loglevel=INFO --concurrency ${SERVER_ALLOCATED_CORES}

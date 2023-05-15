@@ -1,0 +1,11 @@
+FROM python:3.8.16-slim-buster
+
+WORKDIR /main
+
+COPY ./client ./.env ./
+COPY ./common ./common
+COPY ./connectors ./connectors
+
+RUN apt update && chmod +x configure.sh && ./configure.sh
+
+CMD python3 app.py
