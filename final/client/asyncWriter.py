@@ -44,7 +44,8 @@ class SQLDatabaseWriter(SQLDatabaseAcceser):
                 except FileNotFoundError:
                     pass
             
-            process = Popen(f"cd {dirname(dbPath)}; touch {connectionParams['dbName']}", stdout= PIPE, stderr= PIPE, shell= True)  # Variables de entorno
+            boundVolPath = f"/volumebind{dbPath}"
+            process = Popen(f"cd {dirname(boundVolPath)}; touch {connectionParams['dbName']};", stdout= PIPE, stderr= PIPE, shell= True)  # Variables de entorno
             
             if process.communicate()[1]:
                 raise ExecutionError(

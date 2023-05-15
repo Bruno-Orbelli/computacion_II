@@ -28,20 +28,21 @@ class SQLDatabaseAcceser():
                     raise ArgumentError(f"Missing required arguments for establishing '{dbType}' connection.")
             
             elif dbType == "sqlite3":
-                connectionStr = connectionStr.format(dbPath)
-                if not exists(dbPath):
+                boundVolPath = f"/volumebind{dbPath}"
+                connectionStr = connectionStr.format(boundVolPath)
+                if not exists(boundVolPath):
                     raise ConnectionError(
                         f"Database path '{dbPath}' not found; check for any misspellings."
                         )
                 
-                elif not isfile(dbPath):
+                elif not isfile(boundVolPath):
                     raise ConnectionError(
                         f"Path '{dbPath}' does not point to a valid database file."
                     )
                 
                 else:
                     try:
-                        open(dbPath, 'r')
+                        open(boundVolPath, 'r')
                     
                     except PermissionError:
                         raise ConnectionError(
@@ -53,7 +54,7 @@ class SQLDatabaseAcceser():
         try:
             return pyodbc.connect(connectionStr, readonly= True, autocommit= autocommit)
         
-        except (pyodbc.OperationalError, pyodbc.Error):
+        except (pyodbc.OperationalError, pyodbc.Error) as e:
             raise ConnectionError(
                 "Failed to establish connection with {host}:{port} (database `{dbName}`).\nEnsure: \n - server is running and accepting TCP/IP connections at that address. \n - the correct database type has been specified. \n - other requiered arguments (username, password, ...) are not incorrect.".format(**connectionParams)
                 )
@@ -65,7 +66,8 @@ class SQLDatabaseAcceser():
             raise ConnectionError("Connection with database at {host}:{port} (`{dbName}`) has been lost.")
     
     def check_if_directory_exists(self, dbPath: str) -> None:
-        if not exists(dirname(dbPath)):
+        boundVolPath = f"/volumebind{dbPath}"
+        if not exists(dirname(boundVolPath)):
             raise ConnectionError(
                 f"Database dir '{dirname(dbPath)}' not found; check for any misspellings."
             )
