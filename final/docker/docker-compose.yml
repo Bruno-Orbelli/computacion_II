@@ -8,8 +8,6 @@ services:
     ports:
       - 20111:20111
       - 20112:20112
-    env_file:
-      - ./dockerenv.txt
     depends_on:
       - redis
       - celery
@@ -35,3 +33,6 @@ services:
       - conversql
 networks:
   conversql:
+    driver: bridge
+    driver_opts:
+      com.docker.network.enable_ipv6: "true"
