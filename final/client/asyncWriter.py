@@ -40,7 +40,7 @@ class SQLDatabaseWriter(SQLDatabaseAcceser):
         if dbType == "sqlite3": # Evitar sobreescribir el archivo si ya existe
             if self.alreadyExistentBehaviour == "overwrite":
                 try:
-                    move(connectionParams['dbPath'], "../del")
+                    move(connectionParams['dbPath'], "./del")
                 except FileNotFoundError:
                     pass
             

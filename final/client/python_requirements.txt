@@ -1,0 +1,6 @@
+tqdm==4.65.0
+colorama==0.4.3
+pyodbc==4.0.35
+pymongo==4.3.3
+python-dotenv==1.0.0
+pyfiglet==0.8.post1
