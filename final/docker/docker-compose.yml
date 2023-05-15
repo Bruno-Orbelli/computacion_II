@@ -1,0 +1,37 @@
+version: "3.3"
+services:
+  sender_receiver:
+    build:
+      context: ../
+      dockerfile: senderReceiverDockerfile
+    container_name: conversql_sender_receiver
+    ports:
+      - 20111:20111
+      - 20112:20112
+    env_file:
+      - ./dockerenv.txt
+    depends_on:
+      - redis
+      - celery
+    networks:
+      - conversql
+  celery:
+    build:
+      context: ../
+      dockerfile: celeryDockerfile
+    container_name: conversql_worker_pool
+    env_file:
+      - ./dockerenv.txt
+    depends_on:
+      - redis
+    networks:
+      - conversql
+  redis:
+    image: redis:7.0.11-alpine
+    container_name: conversql_redis
+    ports:
+      - 6379:6379
+    networks:
+      - conversql
+networks:
+  conversql:
