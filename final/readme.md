@@ -6,9 +6,9 @@ In this document, you'll find a basic guide for using ConverSQL, with some infor
 1. [Getting started](#1-getting-started)
 2. [ConverSQL's environment configuration](#2-conversqls-environment-configuration)
 3. [Using the interactive CLI app](#3-using-the-interactive-cli-app)
-    3. 1. [Selecting your origin database](#31-selecting-your-origin-databse)
-    3. 2. [Selecting the objects to export](#32-selecting-the-objects-to-export)
-    3. 3. [Specifying a destination database](#33-specifying-a-destination-database)
+3. 1. [Selecting your origin database](#31-selecting-your-origin-databse)
+3. 2. [Selecting the objects to export](#32-selecting-the-objects-to-export)
+3. 3. [Specifying a destination database](#33-specifying-a-destination-database)
 4. [The *Conversion* process](#4-the-conversion-process)
 5. [Results](#5-results)
 
