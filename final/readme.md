@@ -53,7 +53,7 @@ When booting the app with `./launch.sh`, you will be asked for a series of param
 With these, the client will attempt to connect to the origin database. Your Linux or database user must have read or SELECT permissions over it.
 
 #### 3.2. Selecting the objects to export
-After succesfully connecting to the origin database, you can choose to perform a full migration (exporting all tables/collections, views, indexes) or selecting which objects to convert from those available. In the case of tables/collections, the application allows for setting a limit and an offset/skip of rows for each one of them, with the syntax *'\<table or collection name\>' -l \<limit\> -os \<offset/skip\>*. For all other objects, just specify their names.
+After succesfully connecting to the origin database, you can choose to perform a full migration (exporting all tables/collections, views, indexes) or selecting which objects to convert from those available. In the case of tables/collections, the application allows for setting a limit and an offset/skip of rows for each one of them, with the syntax *'\<table or collection name\>' -l \<limit\> -osk \<offset/skip\>*. For all other objects, just specify their names.
 
 **NOTE**: Depending on the value set for `NESTED_VIEW_ITERATION_LIMIT`, some deeply-nested views might not appear as available objects in this stage.
 
